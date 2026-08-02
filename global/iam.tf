@@ -23,15 +23,17 @@ data "aws_iam_policy_document" "github_actions_trust" {
       values   = ["sts.amazonaws.com"]
     }
 
-    # Allows the apply path (pushes to main) and the plan path (any PR
-    # against this repo). Scoped to one repo — curry-space-infra — not
-    # the whole GitHub org.
+    # GitHub's sub claim is "repo:<org>@<org-id>/<repo>@<repo-id>:<rest>" —
+    # not "repo:<org>/<repo>:<rest>". The <rest> also varies (ref:..., pull_request,
+    # or environment:<name> whenever the job sets `environment:`, which the
+    # terraform.yml `run` job does), so this wildcards everything after the
+    # pinned org/repo IDs rather than enumerating each shape. Scoped to one
+    # repo — curry-space-infra — not the whole GitHub org.
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
       values = [
-        "repo:Curry-Studio/curry-space-infra:ref:refs/heads/main",
-        "repo:Curry-Studio/curry-space-infra:pull_request",
+        "repo:Curry-Studio@269430660/curry-space-infra@1319824630:*",
       ]
     }
   }

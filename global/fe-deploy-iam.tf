@@ -18,12 +18,16 @@ data "aws_iam_policy_document" "fe_deploy_trust" {
       values   = ["sts.amazonaws.com"]
     }
 
+    # GitHub's sub claim is "repo:<org>@<org-id>/<repo>@<repo-id>:<rest>",
+    # not "repo:<org>/<repo>:<rest>" — confirmed by decoding an actual token
+    # (see decisions.md). <rest> is "environment:<name>" here since both
+    # deploy.yml jobs set `environment:`.
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
       values = [
-        "repo:Curry-Studio/curryspacefe:*",
-        "repo:Curry-Studio/curry-space-admin-fe:*",
+        "repo:Curry-Studio@269430660/curryspacefe@1311709278:*",
+        "repo:Curry-Studio@269430660/curry-space-admin-fe@1315911766:*",
       ]
     }
   }
