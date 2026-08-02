@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add VPC, ALB, ECS (API/worker/scheduler), Aurora + RDS Proxy, Redis, ECR, Secrets Manager, and account-wide security services to `curry-space-infra`, sized and wired exactly per the architecture doc and `docs/superpowers/specs/2026-08-02-backend-phase2-design.md`, applied to beta only.
+**Goal:** Add VPC, ALB, ECS (API/worker/scheduler), Aurora + RDS Proxy, Redis, ECR, Secrets Manager, and account-wide security services to `curry-space-infra`, sized and wired exactly per the architecture doc and `docs/superpowers/specs/2026-08-02-backend-phase2-design.md`. Tasks 1-11 applied this to beta, found and fixed nine real bugs a live apply surfaced (see the Post-Task-11 addendum), and proved the full path end-to-end with a real deployed image. Tasks 12-13 promote the same, now-fixed code to staging and production.
 
 **Architecture:** Most of this extends the existing `terraform/` root module (same per-environment state as phase 1's S3/CloudFront/WAF). Each task adds one or two `.tf` files and validates cleanly via `terraform plan` before the next task starts; nothing is actually created in AWS until the final "apply and verify" task. Three things are account-wide, not per-environment, and go in `global/` instead: the ECR repository, the two media buckets, and the security services (CloudTrail, Config, GuardDuty, Security Hub) — see the D-008 constraint below for why.
 
@@ -16,7 +16,7 @@
 - Beta sizing is exact per architecture doc §17.2 — no further shrinking: 1 task per service, 0.5 vCPU/1 GB, no auto scaling, `db.t4g.medium` Aurora, `cache.t4g.small` Redis, 1 NAT gateway, 2 AZs.
 - No real backend application image exists yet. ECS services are expected to show 0 healthy tasks after apply — this is the expected end state for this plan, not a bug to chase.
 - `beta`/`staging`/`production` Terraform applies use the existing admin `Github` IAM role for this phase (not `cs-infra-deploy`), since ECS task role creation needs `iam:CreateRole`/`iam:PassRole`.
-- Staging and production `.tfvars` get every new variable added in this plan, with their architecture-doc-specified values, but are **never applied** in this plan — only beta is applied (final task).
+- Staging and production `.tfvars` get every new variable added in this plan, with their architecture-doc-specified values. Tasks 1-11 applied only beta; Tasks 12 and 13 apply staging and production respectively, once each is explicitly gated (Task 13 especially — see its Step 1).
 - Every new resource gets `Environment = var.environment` via the existing `default_tags` block in `terraform/main.tf` — no per-resource tagging needed.
 - Media storage is two shared S3 buckets, not one per environment (decisions.md D-008): `cs-nonprod-use1-media` (beta and staging both use this one) and `cs-prod-use1-media`. Same reasoning applies to the ECR repository (`cs/app`) — one, shared by every environment. Both live in `global/`, referenced from `terraform/` as literal, deterministic strings rather than `terraform_remote_state` lookups.
 
@@ -2395,4 +2395,161 @@ Expected: the first four show a masked non-empty value; `cs/beta/jwt` returns a 
 - [ ] **Step 10: Update decisions.md**
 
 Add a new entry to `curryspace/docs/decisions.md` recording that backend phase 2 is live in beta with no real application image yet, so a future session doesn't mistake the "0 running tasks" state for a regression. Follow the existing D-00N numbering pattern in that file.
+
+---
+
+## Post-Task-11 addendum: bugs a live beta apply surfaced
+
+Everything below Task 11 landed in `main` (not as new numbered tasks) once beta was actually applied and exercised end-to-end. `terraform validate`/`plan` cannot catch any of these — each needed a real `apply` or a real deployed container to find. They're recorded here because Tasks 12 and 13 below assume this state exists, and because it explains why staging/production should be *smoother* than beta was, not equally rocky — every fix already lives in the shared `terraform/` code both environments will apply.
+
+- **Aurora `engine_version = "15.4"`** was deprecated by AWS between plan-writing and apply time (`Cannot find version 15.4`). Replaced with a `data.aws_rds_engine_version` lookup (`database.tf`) that resolves the latest 15.x version at apply time — resolved to `15.17` on beta.
+- **RDS Proxy raced the Aurora cluster** for the account's shared `AWSServiceRoleForRDS` service-linked role on first use (`InvalidParameterValue: RDS is not authorized to assume service-linked role`). Fixed with `depends_on = [aws_rds_cluster.this]` on `aws_db_proxy.this`.
+- **ElastiCache rejected an em dash** in the replication group's `description` field ("non-printable control characters" per the API). Switched to a plain hyphen.
+- **Security Hub's standards-subscription default 3-minute create timeout** wasn't long enough on a freshly-enabled account. Bumped to 15 minutes via a `timeouts` block (`global/security.tf`).
+- **Wrong env var names entirely**: Terraform injected `DATABASE_PROXY_ENDPOINT`/`REDIS_ENDPOINT` + split credentials secrets, but curryspacebe's actual env schema (`src/config/env.ts`) requires single-string `DATABASE_URL`/`REDIS_URL`/`COOKIE_SECRET`. Rebuilt as new Secrets Manager entries (`database_url`, `redis_url`, `cookie_secret` in `secrets.tf`) assembled from the existing `db_app`/`redis_auth` random passwords plus the Proxy/Redis endpoints. Also dropped the `JWT_SIGNING_KEY` injection from the api service — the app's schema has no such field, and the deliberately-empty `jwt` secret was blocking the whole service at the infra level (ECS can't inject a secret with no value) for a variable nothing reads.
+- **`NODE_ENV` was set to `"development"` for any non-production environment** (`var.environment == "production" ? "production" : "development"`), conflating Node's runtime mode with the AWS environment name. Every environment runs the *same* production-built Docker image (`npm ci --omit=dev`), which lacks the `pino-pretty` devDependency the logger tries to load under `NODE_ENV=development` — every container crashed on the first log call, before anything reached CloudWatch. Fixed to always be `"production"` (`compute.tf`).
+- **`sg-scheduler` had no general HTTPS egress rule** — only its port-scoped rules to `sg-rds-proxy`/`sg-redis` — so it could never reach the Secrets Manager interface endpoint at task startup (`ResourceInitializationError: ... context deadline exceeded`). Added `scheduler_egress_https`, mirroring the rule api/worker already had (`networking.tf`).
+- **GitHub-hosted runners build x86_64 by default**; every task runs on ARM64 (Graviton) per the `ecs_service` module's `runtime_platform`. curryspacebe's `deploy.yml` now cross-compiles with QEMU + buildx (`docker buildx build --platform linux/arm64 --push`).
+- **`beta-api.curry.space` was only a second alias on the web distribution**, with just `/api/*` forwarded to the ALB — so the app's own root-mounted routes (`/healthz`, `/readyz`, `/openapi.json`, `/docs`) were unreachable externally, since CloudFront preserved the `/api` prefix but the app doesn't expect it there. CloudFront behaviors match by path, not Host header, so one distribution can't do "forward everything" for one alias and "forward only /api/*" for another. Gave the API its own dedicated `aws_cloudfront_distribution.api` (`cdn.tf`) whose only origin is the ALB with a single `default_cache_behavior` forwarding every path unchanged; reverted `cloudfront_spa` back to a plain S3 SPA module. The ALB's `/healthz` fixed-response rule's `path_pattern` reverted to `/healthz` (no prefix) to match.
+
+**Still deliberately open, carried forward into staging/production as-is:**
+- No application database/role exists in Aurora yet (`cs_app` Postgres role, schema, migrations) — `DATABASE_URL` points at the guaranteed default `postgres` database with the right host/credentials, ready for whenever a migration/bootstrap step runs, but nothing has run one yet. `/readyz` will report `db: false` until it does.
+- `apiRouter` (`/api/v1`) has zero real routes — this plan proves ECS/networking/secrets wiring, not application functionality.
+- Admin WAF default-Allow (D-005) and the deferred WAF rule set (SQLi/Linux managed rules, per-path rate limits, geo blocking, Bot Control) are unchanged from phase 1.
+- `AWS_ROLE_ARN` for `curry-space-infra`'s own workflow is still the admin `Github` role, not `cs-infra-deploy` — see README "Hardening later."
+
+---
+
+## Task 12: Promote curryspacebe's beta fixes to staging, apply and verify staging
+
+**Files:** none in `curry-space-infra` — this task is a `curryspacebe` PR plus re-running the same Terraform apply/verify sequence as Task 11, targeted at `staging`.
+
+**Interfaces:**
+- Consumes: every fix in the Post-Task-11 addendum above (all already in `terraform/`'s shared code — staging picks them up automatically via `environments/staging.tfvars`, no new Terraform changes needed unless staging surfaces something beta didn't).
+- `staging.tfvars` already has every variable this plan added (`vpc_cidr`, sizing, etc.) — confirmed present, no edits expected. If `terraform plan` shows an undeclared-variable error, that's a real gap to fix before continuing, not expected.
+
+- [ ] **Step 1: Promote curryspacebe's `beta` branch to `staging` via a real PR**
+
+`staging` is currently 4 commits behind `beta` — it predates the placeholder worker/scheduler entrypoints, the `deploy.yml` pipeline, and the ARM64 build fix (D-009's branch-model resolution created `staging` from `main`'s tip, before any of this existed). Open a PR `beta` → `staging` in `curryspacebe`, merge it. Do not push directly (branch strategy convention, `AGENTS.md`).
+
+```bash
+gh pr create --repo Curry-Studio/curryspacebe --base staging --head beta \
+  --title "Promote beta: ECS entrypoints, deploy pipeline, ARM64 build fix" \
+  --body "Brings staging even with beta before the first staging backend deploy."
+gh pr merge --repo Curry-Studio/curryspacebe --squash <pr-number>
+```
+
+Merging to `staging` triggers `deploy.yml` immediately (push trigger) — expect it to fail at the AWS credentials step until Step 3 below applies the Terraform staging environment (the ECS cluster/services it's targeting don't exist yet). That failure is expected here, not a regression.
+
+- [ ] **Step 2: Confirm `global/` has no pending changes**
+
+```bash
+cd global && terraform plan
+```
+
+Expected: `No changes.` — `global/` is account-wide and already covers staging (the `cs-be-deploy` role's `be_service_arns`/`be_task_role_arns` were built for all three environments from the start, per `global/be-deploy-iam.tf`).
+
+- [ ] **Step 3: Plan and apply staging**
+
+Same commands as Task 11 Step 2/3, with `staging` in place of `beta`:
+
+```bash
+cd ../terraform
+terraform init -backend-config="bucket=cs-tfstate-670794226662" -backend-config="key=envs/staging/terraform.tfstate" -backend-config="region=us-east-1" -backend-config="dynamodb_table=cs-tfstate-lock"
+terraform plan -var-file=environments/staging.tfvars -out=tfplan
+terraform apply tfplan
+```
+
+Or via GitHub Actions: `target: staging`, `action: apply`. Read the full plan once before applying — this is staging's first-ever apply, and while every bug found in beta is already fixed in this shared code, a 2-AZ/`t4g`-sized environment can still surface something beta's 2-AZ/`t4g` setup didn't (unlikely, since beta is also 2 AZs — but production's 3-AZ jump later is the one genuinely under-exercised shape).
+
+- [ ] **Step 4: Deploy a real image and verify, same checks as Task 11 Steps 4-9**
+
+Re-run `deploy.yml` (push a trivial commit to `staging`, or `gh workflow run deploy.yml --ref staging --repo Curry-Studio/curryspacebe`) now that the cluster exists. Then repeat Task 11's verification steps against staging's resource names (`cs-staging-use1-*`, `staging.curry.space`, `staging-api.curry.space`):
+
+```bash
+curl -I https://staging-api.curry.space/healthz          # expect 200, ALB fixed-response
+aws ecs describe-services --cluster cs-staging-use1-cluster \
+  --services cs-staging-use1-api cs-staging-use1-worker cs-staging-use1-scheduler \
+  --query 'services[].{Name:serviceName,Running:runningCount,Desired:desiredCount}'
+aws elbv2 describe-target-health --target-group-arn "$(aws elbv2 describe-target-groups --names cs-staging-use1-api-tg --query 'TargetGroups[0].TargetGroupArn' --output text)"
+```
+
+Expected: all three services `runningCount: 1` (staging's `api_min_count = 2` means api should reach 2, not 1 — confirm against `staging.tfvars`), target health `healthy`. Unlike beta, staging *should* reach real running tasks on the first real deploy, since the image-build/NODE_ENV/egress/secrets fixes are already baked in — a fresh failure here is a genuinely new bug, not a repeat of one already found.
+
+- [ ] **Step 5: Update decisions.md**
+
+Add an entry recording staging is live with a real image running, and note the date `staging`/`beta` were brought level in `curryspacebe`.
+
+---
+
+## Task 13: Production readiness gate, apply and verify production
+
+**Files:** none in `curry-space-infra` for the gate itself; same apply/verify pattern as Task 12 for production once the gate passes.
+
+**Interfaces:**
+- Consumes: everything Task 12 verified in staging, plus the production-specific gate below. Do not start production's apply until every item in Step 1 is either done or explicitly waived by the user — unlike beta/staging, D-001 means there's no AWS account boundary protecting production from a mistake.
+
+- [ ] **Step 1: Close the production-specific gaps that are still open**
+
+Confirmed still unconfigured as of the beta rollout — check current state before assuming any of these are done:
+
+```bash
+gh api /repos/Curry-Studio/curry-space-infra/environments/production -q '.protection_rules'
+gh api /repos/Curry-Studio/curry-space-infra/environments/global -q '.protection_rules'
+```
+
+Expected today: `[]` for both — no required reviewers configured. Set these up in repo Settings → Environments → `production`/`global` → required reviewers, before a production apply, per the workflow's own comment in `.github/workflows/terraform.yml` ("this is the safety net standing in for the account boundary D-001 gave up"). This is the one item in this task that isn't a Terraform change — it's a GitHub repo setting.
+
+Separately confirm with the user (do not assume) whether these production-only items should be resolved before go-live, or explicitly deferred further:
+- Admin WAF default-Allow (D-005) — real IP ranges still needed to flip to `BLOCK`.
+- Deferred WAF rules (SQLi/Linux managed rule sets, per-path rate limits on `/api/auth/*`/`/api/upload/*`/`/api/admin/*`, geo blocking, Bot Control).
+- `cs_app` database role/schema/migrations still don't exist in any environment — production traffic against real business routes needs this regardless of environment, but it's not blocking a repeat of the "ECS wiring works" proof.
+- `AWS_ROLE_ARN` hardening (admin `Github` role → `cs-infra-deploy`) — note `cs-infra-deploy`'s current scope (S3/CloudFront/WAF/Route53/ACM) doesn't cover EC2/RDS/ElastiCache/ECS/IAM, so it needs widening before it could stand in for a backend apply at all, on top of the swap itself.
+
+- [ ] **Step 2: Promote curryspacebe's `staging` branch to `main` via a real PR**
+
+Same pattern as Task 12 Step 1, `staging` → `main`:
+
+```bash
+gh pr create --repo Curry-Studio/curryspacebe --base main --head staging \
+  --title "Promote staging to production" \
+  --body "Same commits verified live in staging."
+gh pr merge --repo Curry-Studio/curryspacebe --squash <pr-number>
+```
+
+`deploy.yml`'s push trigger on `main` maps to the `production` GitHub Environment (`ENV_NAME` becomes `"production"`) — expect the same "fails until the cluster exists" pattern as Task 12 Step 1 until Step 4 below applies.
+
+- [ ] **Step 3: Confirm `global/` has no pending changes**
+
+```bash
+cd global && terraform plan
+```
+
+Expected: `No changes.`
+
+- [ ] **Step 4: Plan and apply production**
+
+```bash
+cd ../terraform
+terraform init -backend-config="bucket=cs-tfstate-670794226662" -backend-config="key=envs/production/terraform.tfstate" -backend-config="region=us-east-1" -backend-config="dynamodb_table=cs-tfstate-lock"
+terraform plan -var-file=environments/production.tfvars -out=tfplan
+terraform apply tfplan
+```
+
+Or via GitHub Actions: `target: production`, `action: apply` — this now requires the required-reviewer approval configured in Step 1. Read the full plan carefully: production is 3 AZs (not 2, like beta/staging), `db.r7g.large` × 2 Aurora instances with `performance_insights_enabled`/enhanced monitoring turned on, and real autoscaling ranges (`api_max_count = 20`, `worker_max_count = 10`) — this is the first time any of that 3-AZ/monitoring-enabled/wider-autoscaling shape has actually been applied, so budget more time to read the plan than Task 12's staging apply needed.
+
+- [ ] **Step 5: Deploy a real image and verify**
+
+```bash
+curl -I https://api.curry.space/healthz
+aws ecs describe-services --cluster cs-production-use1-cluster \
+  --services cs-production-use1-api cs-production-use1-worker cs-production-use1-scheduler \
+  --query 'services[].{Name:serviceName,Running:runningCount,Desired:desiredCount}'
+```
+
+Expected: `runningCount` matches each service's `*_min_count` in `production.tfvars` (api: 2, worker: 2, scheduler: 1).
+
+- [ ] **Step 6: Update decisions.md**
+
+Record production go-live, the date, and the disposition of every item from Step 1's gate (done, or explicitly deferred with the user's sign-off).
 
