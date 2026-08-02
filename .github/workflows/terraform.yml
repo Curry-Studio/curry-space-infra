@@ -1,0 +1,125 @@
+name: Terraform
+
+on:
+  pull_request:
+    paths:
+      - "global/**"
+      - "terraform/**"
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which config to run against"
+        required: true
+        type: choice
+        options: [global, beta, staging, production]
+      action:
+        description: "plan (safe) or apply"
+        required: true
+        type: choice
+        options: [plan, apply]
+        default: plan
+
+permissions:
+  id-token: write # required for AWS OIDC
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  # Plan-only, every target, on every PR that touches Terraform. No apply
+  # here — this is visibility, not a deploy gate.
+  plan-on-pr:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [global, beta, staging, production]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Init + plan (global)
+        if: matrix.target == 'global'
+        working-directory: global
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.STATE_BUCKET }}" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="dynamodb_table=cs-tfstate-lock"
+          terraform plan
+
+      - name: Init + plan (environment)
+        if: matrix.target != 'global'
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.STATE_BUCKET }}" \
+            -backend-config="key=envs/${{ matrix.target }}/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="dynamodb_table=cs-tfstate-lock"
+          terraform plan -var-file=environments/${{ matrix.target }}.tfvars
+
+  # Manual only. The `environment:` below ties to a GitHub Environment of
+  # the same name — configure required reviewers on `production` (and
+  # `global`) in repo settings so an apply to either needs a human
+  # approval, since D-001 means there's no AWS account boundary to catch
+  # a mistake.
+  run:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Init (global)
+        if: inputs.target == 'global'
+        working-directory: global
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.STATE_BUCKET }}" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="dynamodb_table=cs-tfstate-lock"
+
+      - name: Plan (global)
+        if: inputs.target == 'global'
+        working-directory: global
+        run: terraform plan -out=tfplan
+
+      - name: Apply (global)
+        if: inputs.target == 'global' && inputs.action == 'apply'
+        working-directory: global
+        run: terraform apply tfplan
+
+      - name: Init (environment)
+        if: inputs.target != 'global'
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.STATE_BUCKET }}" \
+            -backend-config="key=envs/${{ inputs.target }}/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="dynamodb_table=cs-tfstate-lock"
+
+      - name: Plan (environment)
+        if: inputs.target != 'global'
+        working-directory: terraform
+        run: terraform plan -var-file=environments/${{ inputs.target }}.tfvars -out=tfplan
+
+      - name: Apply (environment)
+        if: inputs.target != 'global' && inputs.action == 'apply'
+        working-directory: terraform
+        run: terraform apply tfplan
