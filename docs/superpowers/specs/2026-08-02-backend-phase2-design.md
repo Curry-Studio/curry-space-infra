@@ -20,6 +20,7 @@ These were resolved via clarifying questions before this spec was written; recor
 3. **Account-wide security services (GuardDuty, Security Hub, AWS Config, CloudTrail) are in scope**, going into `global/` since they're account-wide, not per-environment.
 4. **Backend infra extends the existing `terraform/` root module** rather than a new root module or a new repo — same per-environment state, same `beta.tfvars`/`staging.tfvars`/`production.tfvars`, same GitHub Actions workflow. Zero new backend-config wiring.
 5. **`beta`/`staging`/`production` Terraform applies continue using the existing admin `Github` IAM role** for this phase, not `cs-infra-deploy` — this phase needs `iam:CreateRole`/`iam:PassRole` for ECS task roles, which `cs-infra-deploy` deliberately doesn't have (see phase 1's README on why that role stays narrow).
+6. **Media storage is two shared S3 buckets, not one per environment.** `cs-nonprod-use1-media` (beta and staging both write here) and `cs-prod-use1-media` — no further subdivision. This mirrors the ECR repository below: both are genuinely account-wide resources, so they belong in `global/`, not the per-environment `terraform/` — a second environment's `terraform/` apply would otherwise collide with the first (S3 bucket and ECR repository names are globally unique, not per-state).
 
 ## Scope
 
@@ -30,10 +31,9 @@ These were resolved via clarifying questions before this spec was written; recor
 - ECS cluster, task definitions (API/worker/scheduler + a one-off migration task shape), services, IAM task/execution roles
 - Aurora PostgreSQL cluster + RDS Proxy
 - ElastiCache Redis
-- ECR repository for the future backend image
 - Secrets Manager containers for DB credentials, Redis auth, JWT signing keys
 - The handful of "hard requirement" CloudWatch alarms the doc calls out by name (queue eviction risk, replica lag, deployment circuit breaker rollback)
-- Account-wide security services in `global/`: GuardDuty, Security Hub, AWS Config, CloudTrail
+- In `global/` (account-wide, shared across environments, not per-environment): the ECR repository for the future backend image, the two media S3 buckets (`cs-nonprod-use1-media`, `cs-prod-use1-media`), and the security services (GuardDuty, Security Hub, AWS Config, CloudTrail)
 
 **Out of scope, deferred to later phases:**
 - Backend application repo, Dockerfile, CI/CD build/deploy pipeline for the API image
@@ -140,9 +140,13 @@ Containers created by Terraform, values populated after apply (not generated bli
 | `cs/<env>/alb/origin-verify` | `random_password` at creation, the `X-Origin-Verify` header value |
 | `cs/<env>/jwt` | Empty at creation — needs a real signing key filled in manually once the backend app exists, since Terraform generating a JWT signing secret nobody's tracked the rotation of is worse than leaving it explicitly empty |
 
-## ECR
+## Shared Resources (`global/`)
 
-One repository, `cs/app` (matches the doc's reasoning — one image serves API, worker, scheduler, and the migration task via different entrypoints, so a second repository would just double the build/scan/lockstep burden for no benefit). Tag immutability on, scan-on-push on, lifecycle rules per the doc (§14.7): untagged expires after 1 day, `sha-` tags keep the newest 30.
+Two things that are genuinely account-wide rather than per-environment, so they go in `global/` alongside the ACM certificate and the OIDC deploy roles — not in the per-environment `terraform/`, where a second environment's apply would collide with the first over a globally-unique name.
+
+**ECR:** one repository, `cs/app` (matches the doc's reasoning — one image serves API, worker, scheduler, and the migration task via different entrypoints, so a second repository would just double the build/scan/lockstep burden for no benefit). Tag immutability on, scan-on-push on, lifecycle rules per the doc (§14.7): untagged expires after 1 day, `sha-` tags keep the newest 30. Referenced from `terraform/` by constructing the image URI as a literal string (`<account-id>.dkr.ecr.us-east-1.amazonaws.com/cs/app:<tag>`) rather than a remote-state lookup, since ECR URIs are fully deterministic.
+
+**Media storage:** two S3 buckets, `cs-nonprod-use1-media` (beta and staging share this one) and `cs-prod-use1-media`. No per-layer or per-purpose subdivision — one bucket per tier is the whole design. Private, encrypted, versioned. Referenced from `terraform/`'s task role policies the same way as the ECR URI: a literal ARN string built from the environment's tier (`production` → `prod`, anything else → `nonprod`), not a remote-state lookup.
 
 ## Account-Wide Security Services (`global/`)
 
