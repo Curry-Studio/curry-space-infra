@@ -51,3 +51,18 @@ variable "az_count" {
   type        = number
   default     = 2
 }
+
+variable "aurora_instance_class" {
+  description = "db.t4g.medium (beta), db.t4g.large (staging), db.r7g.large (production) — architecture doc §17.2-17.4."
+  type        = string
+}
+
+variable "aurora_instance_count" {
+  description = "1 = writer only (beta, staging). 2 = writer + 1 reader (production)."
+  type        = number
+  default     = 1
+}
+
+variable "aurora_backup_retention_days" {
+  type = number
+}

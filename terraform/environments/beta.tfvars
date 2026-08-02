@@ -13,3 +13,7 @@ admin_allowed_ip_set     = []
 
 vpc_cidr = "10.10.0.0/16"
 az_count = 2
+
+aurora_instance_class        = "db.t4g.medium"
+aurora_instance_count        = 1
+aurora_backup_retention_days = 1
