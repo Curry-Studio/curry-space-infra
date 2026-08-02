@@ -60,7 +60,54 @@ resource "aws_secretsmanager_secret_version" "alb_origin_verify" {
 }
 
 # Empty on purpose — fill in manually once the backend app exists and a
-# real signing key is generated and tracked.
+# real signing key is generated and tracked. Currently unused: curryspacebe's
+# env schema (src/config/env.ts) has no JWT_SIGNING_KEY field, so this isn't
+# wired into any task's injected secrets yet.
 resource "aws_secretsmanager_secret" "jwt" {
   name = "cs/${var.environment}/jwt"
+}
+
+resource "random_password" "cookie_secret" {
+  length  = 32
+  special = false
+}
+
+resource "aws_secretsmanager_secret" "cookie_secret" {
+  name = "cs/${var.environment}/cookie-secret"
+}
+
+resource "aws_secretsmanager_secret_version" "cookie_secret" {
+  secret_id     = aws_secretsmanager_secret.cookie_secret.id
+  secret_string = random_password.cookie_secret.result
+}
+
+# curryspacebe's env schema (src/config/env.ts) reads DATABASE_URL/REDIS_URL
+# as single connection strings, not a host + a separate credentials secret —
+# so the values assembled here, not db_app/redis_auth directly, are what's
+# injected into the containers (compute.tf). db_app/redis_auth remain as-is
+# since aws_db_proxy.this's SECRETS auth scheme (database.tf) requires that
+# exact username/password JSON shape.
+#
+# Target database is "postgres" -- the guaranteed default Aurora PostgreSQL
+# database, since no application database/role has been created yet (that's
+# a migration/bootstrap step, still deferred per this task's brief).
+resource "aws_secretsmanager_secret" "database_url" {
+  name = "cs/${var.environment}/database-url"
+}
+
+resource "aws_secretsmanager_secret_version" "database_url" {
+  secret_id     = aws_secretsmanager_secret.database_url.id
+  secret_string = "postgresql://cs_app:${random_password.db_app.result}@${aws_db_proxy.this.endpoint}:5432/postgres"
+}
+
+resource "aws_secretsmanager_secret" "redis_url" {
+  name = "cs/${var.environment}/redis-url"
+}
+
+resource "aws_secretsmanager_secret_version" "redis_url" {
+  secret_id = aws_secretsmanager_secret.redis_url.id
+  # rediss:// (double s), not redis:// -- redis.tf sets
+  # transit_encryption_enabled = true, so the replication group only accepts
+  # TLS connections; ioredis switches into TLS mode based on this scheme.
+  secret_string = "rediss://:${random_password.redis_auth.result}@${aws_elasticache_replication_group.this.primary_endpoint_address}:6379"
 }

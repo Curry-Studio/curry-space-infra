@@ -48,15 +48,18 @@ resource "aws_iam_role_policy" "execution_secrets" {
   name = "${local.name_prefix}-execution-secrets"
   role = aws_iam_role.execution.id
 
+  # The execution role needs GetSecretValue on whatever's actually injected
+  # into a container's `secrets` block below -- database_url/redis_url/
+  # cookie_secret, not db_app/redis_auth directly (see secrets.tf).
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
       Effect = "Allow"
       Action = ["secretsmanager:GetSecretValue"]
       Resource = [
-        aws_secretsmanager_secret.db_app.arn,
-        aws_secretsmanager_secret.redis_auth.arn,
-        aws_secretsmanager_secret.jwt.arn,
+        aws_secretsmanager_secret.database_url.arn,
+        aws_secretsmanager_secret.redis_url.arn,
+        aws_secretsmanager_secret.cookie_secret.arn,
       ]
     }]
   })
@@ -144,15 +147,19 @@ resource "aws_iam_role_policy" "scheduler_task" {
 # pipeline, not a standing ECS service.
 
 locals {
+  # curryspacebe's env schema (src/config/env.ts) requires DATABASE_URL,
+  # REDIS_URL, and COOKIE_SECRET as single connection-string/secret values,
+  # not a host plus a separate credentials secret -- see secrets.tf for how
+  # these are assembled.
   shared_secrets = [
-    { name = "DB_APP_CREDENTIALS", valueFrom = aws_secretsmanager_secret.db_app.arn },
-    { name = "REDIS_AUTH", valueFrom = aws_secretsmanager_secret.redis_auth.arn },
+    { name = "DATABASE_URL", valueFrom = aws_secretsmanager_secret.database_url.arn },
+    { name = "REDIS_URL", valueFrom = aws_secretsmanager_secret.redis_url.arn },
+    { name = "COOKIE_SECRET", valueFrom = aws_secretsmanager_secret.cookie_secret.arn },
   ]
   shared_env = [
     { name = "NODE_ENV", value = var.environment == "production" ? "production" : "development" },
     { name = "AWS_REGION", value = var.aws_region },
-    { name = "DATABASE_PROXY_ENDPOINT", value = aws_db_proxy.this.endpoint },
-    { name = "REDIS_ENDPOINT", value = aws_elasticache_replication_group.this.primary_endpoint_address },
+    { name = "DB_SSL", value = "true" },
   ]
 }
 
@@ -175,7 +182,7 @@ module "api_service" {
   target_group_arn   = aws_lb_target_group.api.arn
   region             = var.aws_region
   environment_vars   = local.shared_env
-  secrets            = concat(local.shared_secrets, [{ name = "JWT_SIGNING_KEY", valueFrom = aws_secretsmanager_secret.jwt.arn }])
+  secrets            = local.shared_secrets
 
   capacity_provider_strategy = [{ capacity_provider = "FARGATE", weight = 1 }]
 
