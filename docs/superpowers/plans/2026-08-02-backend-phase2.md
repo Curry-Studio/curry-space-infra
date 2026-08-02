@@ -31,7 +31,7 @@
 - Modify: `terraform/environments/beta.tfvars`, `staging.tfvars`, `production.tfvars` (add `vpc_cidr`)
 
 **Interfaces:**
-- Produces: `aws_vpc.this` (id via `aws_vpc.this.id`), `aws_subnet.public[*]`, `aws_subnet.app[*]`, `aws_subnet.data[*]` (each a list keyed by AZ index), `aws_security_group.alb.id`, `.api.id`, `.worker.id`, `.scheduler.id`, `.rds_proxy.id`, `.aurora.id`, `.redis.id`. `local.az_count` (2 for beta/staging, 3 for production). `local.availability_zones` (list of AZ names actually used).
+- Produces: `aws_vpc.this` (id via `aws_vpc.this.id`), `aws_subnet.public[*]`, `aws_subnet.app[*]`, `aws_subnet.data[*]` (each a list keyed by AZ index), `aws_security_group.alb.id`, `.api.id`, `.worker.id`, `.scheduler.id`, `.rds_proxy.id`, `.aurora.id`, `.redis.id`. `var.az_count` (2 for beta/staging, 3 for production) — later tasks use the variable directly, not a local. `local.availability_zones` (list of AZ names actually used).
 
 - [ ] **Step 1: Add `vpc_cidr` variable and per-environment values**
 
@@ -243,16 +243,21 @@ data "aws_ec2_managed_prefix_list" "cloudfront" {
 resource "aws_security_group" "alb" {
   name_prefix = "${local.name_prefix}-alb-"
   vpc_id      = aws_vpc.this.id
+  tags        = { Name = "${local.name_prefix}-sg-alb" }
+  # No inline ingress/egress blocks — every rule is a standalone
+  # aws_security_group_rule below. Mixing inline blocks with standalone
+  # rule resources on the same security group is a documented Terraform/
+  # AWS-provider conflict (the two mechanisms fight over which rules exist).
+}
 
-  ingress {
-    description     = "HTTPS from CloudFront only — not the open internet"
-    from_port       = 443
-    to_port         = 443
-    protocol        = "tcp"
-    prefix_list_ids = [data.aws_ec2_managed_prefix_list.cloudfront.id]
-  }
-
-  tags = { Name = "${local.name_prefix}-sg-alb" }
+resource "aws_security_group_rule" "cloudfront_to_alb" {
+  type              = "ingress"
+  from_port         = 443
+  to_port           = 443
+  protocol          = "tcp"
+  security_group_id = aws_security_group.alb.id
+  prefix_list_ids   = [data.aws_ec2_managed_prefix_list.cloudfront.id]
+  description       = "HTTPS from CloudFront only — not the open internet"
 }
 
 resource "aws_security_group" "api" {
@@ -327,6 +332,38 @@ resource "aws_security_group_rule" "scheduler_to_proxy" {
   source_security_group_id = aws_security_group.scheduler.id
 }
 
+# Egress halves of the three rules above. api/worker/scheduler have zero
+# inline blocks on their own security groups (bare resources, rules added
+# only as standalone aws_security_group_rules) — Terraform revokes AWS's
+# default allow-all egress on a bare security group, so without these,
+# none of the three can actually send traffic to RDS Proxy at all.
+resource "aws_security_group_rule" "api_egress_to_proxy" {
+  type                     = "egress"
+  from_port                = 5432
+  to_port                  = 5432
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.api.id
+  source_security_group_id = aws_security_group.rds_proxy.id
+}
+
+resource "aws_security_group_rule" "worker_egress_to_proxy" {
+  type                     = "egress"
+  from_port                = 5432
+  to_port                  = 5432
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.worker.id
+  source_security_group_id = aws_security_group.rds_proxy.id
+}
+
+resource "aws_security_group_rule" "scheduler_egress_to_proxy" {
+  type                     = "egress"
+  from_port                = 5432
+  to_port                  = 5432
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.scheduler.id
+  source_security_group_id = aws_security_group.rds_proxy.id
+}
+
 resource "aws_security_group" "aurora" {
   name_prefix = "${local.name_prefix}-aurora-"
   vpc_id      = aws_vpc.this.id
@@ -382,6 +419,37 @@ resource "aws_security_group_rule" "scheduler_to_redis" {
   protocol                 = "tcp"
   security_group_id        = aws_security_group.redis.id
   source_security_group_id = aws_security_group.scheduler.id
+}
+
+# Egress halves of the three rules above — same reasoning as the RDS Proxy
+# egress rules: without these, api/worker/scheduler cannot send traffic to
+# Redis at all, since none of the three has any other egress rule covering
+# port 6379.
+resource "aws_security_group_rule" "api_egress_to_redis" {
+  type                     = "egress"
+  from_port                = 6379
+  to_port                  = 6379
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.api.id
+  source_security_group_id = aws_security_group.redis.id
+}
+
+resource "aws_security_group_rule" "worker_egress_to_redis" {
+  type                     = "egress"
+  from_port                = 6379
+  to_port                  = 6379
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.worker.id
+  source_security_group_id = aws_security_group.redis.id
+}
+
+resource "aws_security_group_rule" "scheduler_egress_to_redis" {
+  type                     = "egress"
+  from_port                = 6379
+  to_port                  = 6379
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.scheduler.id
+  source_security_group_id = aws_security_group.redis.id
 }
 
 resource "aws_security_group_rule" "api_egress_https" {
