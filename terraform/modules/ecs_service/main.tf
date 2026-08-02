@@ -72,7 +72,14 @@ resource "aws_ecs_service" "this" {
   }
 
   lifecycle {
-    ignore_changes = [desired_count] # auto scaling (when enabled) owns this
+    # desired_count: auto scaling (when enabled) owns this.
+    # task_definition: once a real image exists, curryspacebe's own deploy
+    # workflow registers new revisions and updates the service directly
+    # (register-task-definition + update-service, not a Terraform apply) --
+    # Terraform still owns cpu/memory/env/secrets/command via
+    # aws_ecs_task_definition.this above, but stops forcing the service
+    # back onto that revision's ARN so it doesn't fight CI on every apply.
+    ignore_changes = [desired_count, task_definition]
   }
 }
 
