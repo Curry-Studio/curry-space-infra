@@ -15,3 +15,6 @@ az_count = 2
 aurora_instance_class        = "db.t4g.large"
 aurora_instance_count        = 1
 aurora_backup_retention_days = 7
+
+redis_node_type     = "cache.t4g.medium"
+redis_replica_count = 1

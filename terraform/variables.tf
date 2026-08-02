@@ -66,3 +66,14 @@ variable "aurora_instance_count" {
 variable "aurora_backup_retention_days" {
   type = number
 }
+
+variable "redis_node_type" {
+  description = "cache.t4g.small (beta), cache.t4g.medium (staging), cache.r7g.large (production) — architecture doc §11.1."
+  type        = string
+}
+
+variable "redis_replica_count" {
+  description = "0 = single node (beta). 1 = primary + replica, Multi-AZ (staging, production)."
+  type        = number
+  default     = 0
+}

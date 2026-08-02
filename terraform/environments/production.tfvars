@@ -15,3 +15,6 @@ az_count = 3
 aurora_instance_class        = "db.r7g.large"
 aurora_instance_count        = 2
 aurora_backup_retention_days = 35
+
+redis_node_type     = "cache.r7g.large"
+redis_replica_count = 1
