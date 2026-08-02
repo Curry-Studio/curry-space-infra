@@ -20,3 +20,17 @@ aurora_backup_retention_days = 1
 
 redis_node_type     = "cache.t4g.small"
 redis_replica_count = 0
+
+# Doc §17.2: 0.5 vCPU / 1GB per service, 1 task each, no autoscaling.
+api_cpu       = 512
+api_memory    = 1024
+api_min_count = 1
+api_max_count = 1
+
+worker_cpu       = 512
+worker_memory    = 1024
+worker_min_count = 1
+worker_max_count = 1
+
+scheduler_cpu    = 512
+scheduler_memory = 1024

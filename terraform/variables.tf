@@ -77,3 +77,16 @@ variable "redis_replica_count" {
   type        = number
   default     = 0
 }
+
+variable "api_cpu" { type = number }
+variable "api_memory" { type = number }
+variable "api_min_count" { type = number }
+variable "api_max_count" { type = number }
+
+variable "worker_cpu" { type = number }
+variable "worker_memory" { type = number }
+variable "worker_min_count" { type = number }
+variable "worker_max_count" { type = number }
+
+variable "scheduler_cpu" { type = number }
+variable "scheduler_memory" { type = number }
