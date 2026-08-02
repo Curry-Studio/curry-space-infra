@@ -73,8 +73,17 @@ data "aws_cloudfront_cache_policy" "caching_disabled" {
   name = "Managed-CachingDisabled"
 }
 
-data "aws_cloudfront_origin_request_policy" "all_viewer_except_host" {
-  name = "Managed-AllViewerExceptHostHeader"
+# NOT AllViewerExceptHostHeader: that policy replaces the Host header with
+# the origin's own domain name (the ALB's raw *.elb.amazonaws.com DNS
+# name). CloudFront then validates the ALB's presented certificate against
+# that raw hostname -- but the ALB's listener cert only covers *.curry.space,
+# so the TLS handshake fails and CloudFront returns 502 with
+# "X-Cache: Error from cloudfront" (confirmed against a live beta apply).
+# Forwarding the original Host header (the viewer's real hostname, which the
+# cert does cover) is what AWS docs require for a custom origin whose cert
+# doesn't match its own DNS name.
+data "aws_cloudfront_origin_request_policy" "all_viewer" {
+  name = "Managed-AllViewer"
 }
 
 resource "aws_cloudfront_response_headers_policy" "noindex" {
@@ -145,7 +154,7 @@ resource "aws_cloudfront_distribution" "this" {
       target_origin_id         = "alb-${var.name}"
       viewer_protocol_policy   = "redirect-to-https"
       cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
-      origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id
+      origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer.id
     }
   }
 
