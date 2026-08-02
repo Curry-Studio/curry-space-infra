@@ -8,3 +8,6 @@ enable_rate_limiting = true
 # D-005: open admin access everywhere until real CIDRs exist.
 admin_waf_default_action = "ALLOW"
 admin_allowed_ip_set     = []
+
+vpc_cidr = "10.20.0.0/16"
+az_count = 2

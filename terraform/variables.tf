@@ -40,3 +40,14 @@ variable "enable_rate_limiting" {
   type        = bool
   default     = false
 }
+
+variable "vpc_cidr" {
+  description = "VPC CIDR block. Beta 10.10.0.0/16, staging 10.20.0.0/16, production 10.0.0.0/16 — non-overlapping across environments (architecture doc §3.1)."
+  type        = string
+}
+
+variable "az_count" {
+  description = "Number of AZs to spread subnets across. 2 for beta/staging, 3 for production."
+  type        = number
+  default     = 2
+}
