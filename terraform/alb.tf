@@ -77,8 +77,16 @@ resource "aws_lb_listener_rule" "health" {
     }
   }
 
+  # CloudFront forwards the full request path unchanged (no origin-path
+  # stripping on the /api/* behavior — see cloudfront_spa's dynamic
+  # origin block), so a client request to /api/healthz arrives here as
+  # /api/healthz, not /healthz. A live end-to-end check against
+  # /api/healthz caught this: with the pattern as just "/healthz" this
+  # rule never matched, and the request fell through to the "api" rule
+  # below, which forwards to a target group with zero healthy targets
+  # (502) instead of returning the fixed 200.
   condition {
-    path_pattern { values = ["/healthz"] }
+    path_pattern { values = ["/api/healthz"] }
   }
 
   condition {
