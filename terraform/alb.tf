@@ -77,16 +77,13 @@ resource "aws_lb_listener_rule" "health" {
     }
   }
 
-  # CloudFront forwards the full request path unchanged (no origin-path
-  # stripping on the /api/* behavior — see cloudfront_spa's dynamic
-  # origin block), so a client request to /api/healthz arrives here as
-  # /api/healthz, not /healthz. A live end-to-end check against
-  # /api/healthz caught this: with the pattern as just "/healthz" this
-  # rule never matched, and the request fell through to the "api" rule
-  # below, which forwards to a target group with zero healthy targets
-  # (502) instead of returning the fixed 200.
+  # beta-api.curry.space is its own dedicated CloudFront distribution
+  # (cdn.tf) that forwards every path unchanged, with no /api prefix added
+  # or stripped -- so a client request to beta-api.curry.space/healthz
+  # arrives here as literally /healthz, matching the app's own root-mounted
+  # health route (src/app.ts mounts healthRoutes at root, not under /api/v1).
   condition {
-    path_pattern { values = ["/api/healthz"] }
+    path_pattern { values = ["/healthz"] }
   }
 
   condition {

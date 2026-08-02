@@ -28,8 +28,8 @@ resource "aws_route53_record" "api_a" {
   type    = "A"
 
   alias {
-    name                   = module.web.distribution_domain_name
-    zone_id                = module.web.distribution_hosted_zone_id
+    name                   = aws_cloudfront_distribution.api.domain_name
+    zone_id                = aws_cloudfront_distribution.api.hosted_zone_id
     evaluate_target_health = false
   }
 }
@@ -40,8 +40,8 @@ resource "aws_route53_record" "api_aaaa" {
   type    = "AAAA"
 
   alias {
-    name                   = module.web.distribution_domain_name
-    zone_id                = module.web.distribution_hosted_zone_id
+    name                   = aws_cloudfront_distribution.api.domain_name
+    zone_id                = aws_cloudfront_distribution.api.hosted_zone_id
     evaluate_target_health = false
   }
 }

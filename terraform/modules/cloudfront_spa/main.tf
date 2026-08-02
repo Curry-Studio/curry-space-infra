@@ -69,23 +69,6 @@ data "aws_cloudfront_cache_policy" "caching_optimized" {
   name = "Managed-CachingOptimized"
 }
 
-data "aws_cloudfront_cache_policy" "caching_disabled" {
-  name = "Managed-CachingDisabled"
-}
-
-# NOT AllViewerExceptHostHeader: that policy replaces the Host header with
-# the origin's own domain name (the ALB's raw *.elb.amazonaws.com DNS
-# name). CloudFront then validates the ALB's presented certificate against
-# that raw hostname -- but the ALB's listener cert only covers *.curry.space,
-# so the TLS handshake fails and CloudFront returns 502 with
-# "X-Cache: Error from cloudfront" (confirmed against a live beta apply).
-# Forwarding the original Host header (the viewer's real hostname, which the
-# cert does cover) is what AWS docs require for a custom origin whose cert
-# doesn't match its own DNS name.
-data "aws_cloudfront_origin_request_policy" "all_viewer" {
-  name = "Managed-AllViewer"
-}
-
 resource "aws_cloudfront_response_headers_policy" "noindex" {
   count = var.enable_noindex ? 1 : 0
   name  = "${var.name}-noindex"
@@ -115,26 +98,6 @@ resource "aws_cloudfront_distribution" "this" {
     origin_access_control_id = aws_cloudfront_origin_access_control.this.id
   }
 
-  dynamic "origin" {
-    for_each = var.alb_origin_domain_name == null ? [] : [1]
-    content {
-      domain_name = var.alb_origin_domain_name
-      origin_id   = "alb-${var.name}"
-
-      custom_origin_config {
-        http_port              = 80
-        https_port             = 443
-        origin_protocol_policy = "https-only"
-        origin_ssl_protocols   = ["TLSv1.2"]
-      }
-
-      custom_header {
-        name  = "X-Origin-Verify"
-        value = var.origin_verify_header_value
-      }
-    }
-  }
-
   default_cache_behavior {
     allowed_methods            = ["GET", "HEAD"]
     cached_methods             = ["GET", "HEAD"]
@@ -143,19 +106,6 @@ resource "aws_cloudfront_distribution" "this" {
     compress                   = true
     cache_policy_id            = data.aws_cloudfront_cache_policy.caching_optimized.id
     response_headers_policy_id = var.enable_noindex ? aws_cloudfront_response_headers_policy.noindex[0].id : null
-  }
-
-  dynamic "ordered_cache_behavior" {
-    for_each = var.alb_origin_domain_name == null ? [] : [1]
-    content {
-      path_pattern             = "/api/*"
-      allowed_methods          = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
-      cached_methods           = ["GET", "HEAD"]
-      target_origin_id         = "alb-${var.name}"
-      viewer_protocol_policy   = "redirect-to-https"
-      cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
-      origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer.id
-    }
   }
 
   # SPA fallback: a client-side route with no matching S3 key comes back as

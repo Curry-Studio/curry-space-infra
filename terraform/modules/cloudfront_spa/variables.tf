@@ -4,21 +4,8 @@ variable "name" {
 }
 
 variable "domain_names" {
-  description = "CloudFront alternate domain names (CNAMEs). The web distribution gets both its app hostname and its API hostname; admin gets just its own."
+  description = "CloudFront alternate domain names (CNAMEs)."
   type        = list(string)
-}
-
-variable "alb_origin_domain_name" {
-  description = "ALB DNS name. When set, adds an ALB origin and a /api/* behavior. Leave null for distributions with no API path (admin)."
-  type        = string
-  default     = null
-}
-
-variable "origin_verify_header_value" {
-  description = "Value CloudFront sends as X-Origin-Verify to the ALB origin. Required if alb_origin_domain_name is set."
-  type        = string
-  default     = null
-  sensitive   = true
 }
 
 variable "cert_arn" {

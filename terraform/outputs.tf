@@ -22,6 +22,10 @@ output "admin_url" {
   value = "https://${local.admin_domain}"
 }
 
+output "api_url" {
+  value = "https://${local.api_domain}"
+}
+
 output "logs_bucket_name" {
   value = aws_s3_bucket.logs.id
 }
