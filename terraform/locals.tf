@@ -7,6 +7,7 @@ locals {
   # per-environment subdomain.
   web_domain   = var.environment == "production" ? "curry.space" : "${var.environment}.curry.space"
   admin_domain = var.environment == "production" ? "admin.curry.space" : "${var.environment}-admin.curry.space"
+  api_domain   = var.environment == "production" ? "api.curry.space" : "${var.environment}-api.curry.space"
 
   cert_arn = data.terraform_remote_state.global.outputs.wildcard_cert_arn
   zone_id  = data.terraform_remote_state.global.outputs.zone_id

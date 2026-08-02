@@ -69,6 +69,14 @@ data "aws_cloudfront_cache_policy" "caching_optimized" {
   name = "Managed-CachingOptimized"
 }
 
+data "aws_cloudfront_cache_policy" "caching_disabled" {
+  name = "Managed-CachingDisabled"
+}
+
+data "aws_cloudfront_origin_request_policy" "all_viewer_except_host" {
+  name = "Managed-AllViewerExceptHostHeader"
+}
+
 resource "aws_cloudfront_response_headers_policy" "noindex" {
   count = var.enable_noindex ? 1 : 0
   name  = "${var.name}-noindex"
@@ -86,7 +94,7 @@ resource "aws_cloudfront_distribution" "this" {
   enabled             = true
   is_ipv6_enabled     = true
   default_root_object = "index.html"
-  aliases             = [var.domain_name]
+  aliases             = var.domain_names
   price_class         = var.price_class
   web_acl_id          = var.web_acl_arn
   http_version        = "http2and3"
@@ -98,6 +106,26 @@ resource "aws_cloudfront_distribution" "this" {
     origin_access_control_id = aws_cloudfront_origin_access_control.this.id
   }
 
+  dynamic "origin" {
+    for_each = var.alb_origin_domain_name == null ? [] : [1]
+    content {
+      domain_name = var.alb_origin_domain_name
+      origin_id   = "alb-${var.name}"
+
+      custom_origin_config {
+        http_port              = 80
+        https_port             = 443
+        origin_protocol_policy = "https-only"
+        origin_ssl_protocols   = ["TLSv1.2"]
+      }
+
+      custom_header {
+        name  = "X-Origin-Verify"
+        value = var.origin_verify_header_value
+      }
+    }
+  }
+
   default_cache_behavior {
     allowed_methods            = ["GET", "HEAD"]
     cached_methods             = ["GET", "HEAD"]
@@ -106,6 +134,19 @@ resource "aws_cloudfront_distribution" "this" {
     compress                   = true
     cache_policy_id            = data.aws_cloudfront_cache_policy.caching_optimized.id
     response_headers_policy_id = var.enable_noindex ? aws_cloudfront_response_headers_policy.noindex[0].id : null
+  }
+
+  dynamic "ordered_cache_behavior" {
+    for_each = var.alb_origin_domain_name == null ? [] : [1]
+    content {
+      path_pattern             = "/api/*"
+      allowed_methods          = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
+      cached_methods           = ["GET", "HEAD"]
+      target_origin_id         = "alb-${var.name}"
+      viewer_protocol_policy   = "redirect-to-https"
+      cache_policy_id          = data.aws_cloudfront_cache_policy.caching_disabled.id
+      origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id
+    }
   }
 
   # SPA fallback: a client-side route with no matching S3 key comes back as
