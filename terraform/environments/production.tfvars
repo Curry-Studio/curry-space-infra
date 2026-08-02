@@ -1,6 +1,6 @@
 environment = "production"
 
-state_bucket = "cs-tfstate-REPLACE_WITH_ACCOUNT_ID"
+state_bucket = "cs-tfstate-670794226662"
 
 enable_rate_limiting = true
 

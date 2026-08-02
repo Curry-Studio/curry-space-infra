@@ -1,6 +1,9 @@
 .terraform/
 *.tfstate
 *.tfstate.*
+# bootstrap/ has no remote backend (it creates the backend), so its state
+# is deliberately committed — see .github/workflows/terraform.yml.
+!bootstrap/terraform.tfstate
 *.tfplan
 tfplan
 crash.log

@@ -11,7 +11,7 @@ on:
         description: "Which config to run against"
         required: true
         type: choice
-        options: [global, beta, staging, production]
+        options: [bootstrap, global, beta, staging, production]
       action:
         description: "plan (safe) or apply"
         required: true
@@ -75,6 +75,9 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     environment: ${{ inputs.target }}
+    permissions:
+      id-token: write
+      contents: write # bootstrap commits its state file back; see the step below
     steps:
       - uses: actions/checkout@v4
 
@@ -84,6 +87,36 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - uses: hashicorp/setup-terraform@v3
+
+      # bootstrap/ creates the S3 bucket + DynamoDB table every other config's
+      # backend depends on, so it can't use a remote backend itself — chicken
+      # and egg. It runs with local state, checked out from and committed
+      # back to the repo, instead. Small, non-sensitive (two resource names),
+      # and this is the standard pattern for bootstrap stacks specifically
+      # because of that problem.
+      - name: Init (bootstrap)
+        if: inputs.target == 'bootstrap'
+        working-directory: bootstrap
+        run: terraform init
+
+      - name: Plan (bootstrap)
+        if: inputs.target == 'bootstrap'
+        working-directory: bootstrap
+        run: terraform plan -out=tfplan
+
+      - name: Apply (bootstrap)
+        if: inputs.target == 'bootstrap' && inputs.action == 'apply'
+        working-directory: bootstrap
+        run: terraform apply tfplan
+
+      - name: Commit bootstrap state
+        if: inputs.target == 'bootstrap' && inputs.action == 'apply'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f bootstrap/terraform.tfstate
+          git diff --cached --quiet && echo "No state changes to commit" || git commit -m "bootstrap: update terraform state [skip ci]"
+          git push
 
       - name: Init (global)
         if: inputs.target == 'global'
@@ -105,7 +138,7 @@ jobs:
         run: terraform apply tfplan
 
       - name: Init (environment)
-        if: inputs.target != 'global'
+        if: inputs.target != 'global' && inputs.target != 'bootstrap'
         working-directory: terraform
         run: |
           terraform init \
@@ -115,11 +148,11 @@ jobs:
             -backend-config="dynamodb_table=cs-tfstate-lock"
 
       - name: Plan (environment)
-        if: inputs.target != 'global'
+        if: inputs.target != 'global' && inputs.target != 'bootstrap'
         working-directory: terraform
         run: terraform plan -var-file=environments/${{ inputs.target }}.tfvars -out=tfplan
 
       - name: Apply (environment)
-        if: inputs.target != 'global' && inputs.action == 'apply'
+        if: inputs.target != 'global' && inputs.target != 'bootstrap' && inputs.action == 'apply'
         working-directory: terraform
         run: terraform apply tfplan
