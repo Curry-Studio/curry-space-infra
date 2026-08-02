@@ -152,15 +152,17 @@ resource "aws_security_group" "alb" {
   name_prefix = "${local.name_prefix}-alb-"
   vpc_id      = aws_vpc.this.id
 
-  ingress {
-    description     = "HTTPS from CloudFront only — not the open internet"
-    from_port       = 443
-    to_port         = 443
-    protocol        = "tcp"
-    prefix_list_ids = [data.aws_ec2_managed_prefix_list.cloudfront.id]
-  }
-
   tags = { Name = "${local.name_prefix}-sg-alb" }
+}
+
+resource "aws_security_group_rule" "cloudfront_to_alb" {
+  type              = "ingress"
+  from_port         = 443
+  to_port           = 443
+  protocol          = "tcp"
+  security_group_id = aws_security_group.alb.id
+  prefix_list_ids   = [data.aws_ec2_managed_prefix_list.cloudfront.id]
+  description       = "HTTPS from CloudFront only - not the open internet"
 }
 
 resource "aws_security_group" "api" {
@@ -235,6 +237,33 @@ resource "aws_security_group_rule" "scheduler_to_proxy" {
   source_security_group_id = aws_security_group.scheduler.id
 }
 
+resource "aws_security_group_rule" "api_egress_to_proxy" {
+  type                     = "egress"
+  from_port                = 5432
+  to_port                  = 5432
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.api.id
+  source_security_group_id = aws_security_group.rds_proxy.id
+}
+
+resource "aws_security_group_rule" "worker_egress_to_proxy" {
+  type                     = "egress"
+  from_port                = 5432
+  to_port                  = 5432
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.worker.id
+  source_security_group_id = aws_security_group.rds_proxy.id
+}
+
+resource "aws_security_group_rule" "scheduler_egress_to_proxy" {
+  type                     = "egress"
+  from_port                = 5432
+  to_port                  = 5432
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.scheduler.id
+  source_security_group_id = aws_security_group.rds_proxy.id
+}
+
 resource "aws_security_group" "aurora" {
   name_prefix = "${local.name_prefix}-aurora-"
   vpc_id      = aws_vpc.this.id
@@ -290,6 +319,33 @@ resource "aws_security_group_rule" "scheduler_to_redis" {
   protocol                 = "tcp"
   security_group_id        = aws_security_group.redis.id
   source_security_group_id = aws_security_group.scheduler.id
+}
+
+resource "aws_security_group_rule" "api_egress_to_redis" {
+  type                     = "egress"
+  from_port                = 6379
+  to_port                  = 6379
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.api.id
+  source_security_group_id = aws_security_group.redis.id
+}
+
+resource "aws_security_group_rule" "worker_egress_to_redis" {
+  type                     = "egress"
+  from_port                = 6379
+  to_port                  = 6379
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.worker.id
+  source_security_group_id = aws_security_group.redis.id
+}
+
+resource "aws_security_group_rule" "scheduler_egress_to_redis" {
+  type                     = "egress"
+  from_port                = 6379
+  to_port                  = 6379
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.scheduler.id
+  source_security_group_id = aws_security_group.redis.id
 }
 
 resource "aws_security_group_rule" "api_egress_https" {
