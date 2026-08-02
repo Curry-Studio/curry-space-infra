@@ -157,7 +157,14 @@ locals {
     { name = "COOKIE_SECRET", valueFrom = aws_secretsmanager_secret.cookie_secret.arn },
   ]
   shared_env = [
-    { name = "NODE_ENV", value = var.environment == "production" ? "production" : "development" },
+    # Always "production": this is Node's runtime mode, not the AWS
+    # environment name. Every environment (beta/staging/production) runs
+    # the same production Docker image (npm ci --omit=dev), which lacks
+    # pino-pretty -- NODE_ENV=development makes src/utils/logger.ts try to
+    # load that dev-only transport and crash on the very first log call,
+    # before anything reaches CloudWatch (confirmed by running the deployed
+    # image locally with matching env vars).
+    { name = "NODE_ENV", value = "production" },
     { name = "AWS_REGION", value = var.aws_region },
     { name = "DB_SSL", value = "true" },
   ]
