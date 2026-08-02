@@ -14,10 +14,20 @@ resource "aws_rds_cluster_parameter_group" "this" {
   }
 }
 
+# "15.4" (this plan's original pin) was deprecated by AWS between the plan
+# being written and applied — CreateDBCluster rejected it outright. Resolve
+# the latest available 15.x version at apply time instead of hardcoding one,
+# since AWS retires minor versions on its own schedule.
+data "aws_rds_engine_version" "aurora_postgresql" {
+  engine  = "aurora-postgresql"
+  version = "15"
+  latest  = true
+}
+
 resource "aws_rds_cluster" "this" {
   cluster_identifier              = "${local.name_prefix}-aurora-cluster"
   engine                          = "aurora-postgresql"
-  engine_version                  = "15.4"
+  engine_version                  = data.aws_rds_engine_version.aurora_postgresql.version_actual
   master_username                 = "dbadmin"
   master_password                 = random_password.db_master.result
   db_subnet_group_name            = aws_db_subnet_group.this.name
@@ -115,6 +125,15 @@ resource "aws_db_proxy" "this" {
     secret_arn  = aws_secretsmanager_secret.db_app.arn
     iam_auth    = "DISABLED"
   }
+
+  # Without this, Terraform creates the cluster and the proxy in parallel,
+  # and both are first-touch users of the account's shared
+  # AWSServiceRoleForRDS service-linked role. A live apply hit "RDS is not
+  # authorized to assume service-linked role ... Check your RDS
+  # service-linked role and try again" from the proxy racing the cluster
+  # for that role before AWS finished propagating it. Serializing behind
+  # the cluster avoids the race.
+  depends_on = [aws_rds_cluster.this]
 }
 
 resource "aws_db_proxy_default_target_group" "this" {

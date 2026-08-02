@@ -19,7 +19,7 @@ resource "aws_elasticache_parameter_group" "this" {
 
 resource "aws_elasticache_replication_group" "this" {
   replication_group_id       = "${local.name_prefix}-redis"
-  description                = "Curry Space ${var.environment} — cache, sessions, BullMQ"
+  description                = "Curry Space ${var.environment} - cache, sessions, BullMQ"
   engine                     = "redis"
   engine_version             = "7.1"
   node_type                  = var.redis_node_type
