@@ -841,8 +841,12 @@ resource "aws_rds_cluster_instance" "this" {
   # Performance Insights isn't supported on t4g classes (production uses
   # r7g and is the only environment that gets it — architecture doc §12.1).
   performance_insights_enabled = var.environment == "production"
-  monitoring_interval          = 60
-  monitoring_role_arn          = var.environment == "production" ? aws_iam_role.rds_enhanced_monitoring[0].arn : null
+  # AWS rejects a non-zero monitoring_interval without a matching
+  # monitoring_role_arn (InvalidParameterCombination) — terraform validate
+  # doesn't catch this, only a real apply does. Both must be conditional
+  # together, not just the role.
+  monitoring_interval = var.environment == "production" ? 60 : 0
+  monitoring_role_arn = var.environment == "production" ? aws_iam_role.rds_enhanced_monitoring[0].arn : null
 }
 
 resource "aws_iam_role" "rds_enhanced_monitoring" {
