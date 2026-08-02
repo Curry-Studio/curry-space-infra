@@ -263,8 +263,8 @@ resource "aws_security_group" "api" {
 
 resource "aws_security_group_rule" "alb_to_api" {
   type                     = "ingress"
-  from_port                = 8080
-  to_port                  = 8080
+  from_port                = 3000
+  to_port                  = 3000
   protocol                 = "tcp"
   security_group_id        = aws_security_group.api.id
   source_security_group_id = aws_security_group.alb.id
@@ -273,8 +273,8 @@ resource "aws_security_group_rule" "alb_to_api" {
 
 resource "aws_security_group_rule" "alb_egress_to_api" {
   type                     = "egress"
-  from_port                = 8080
-  to_port                  = 8080
+  from_port                = 3000
+  to_port                  = 3000
   protocol                 = "tcp"
   security_group_id        = aws_security_group.alb.id
   source_security_group_id = aws_security_group.api.id
@@ -1020,13 +1020,13 @@ resource "aws_lb" "this" {
 
 resource "aws_lb_target_group" "api" {
   name        = "${local.name_prefix}-api-tg"
-  port        = 8080
+  port        = 3000
   protocol    = "HTTP"
   vpc_id      = aws_vpc.this.id
   target_type = "ip"
 
   health_check {
-    path                = "/health"
+    path                = "/healthz"
     matcher             = "200"
     interval            = 15
     timeout             = 5
@@ -1087,7 +1087,7 @@ resource "aws_lb_listener_rule" "health" {
   }
 
   condition {
-    path_pattern { values = ["/health"] }
+    path_pattern { values = ["/healthz"] }
   }
 
   condition {
@@ -1584,8 +1584,8 @@ module "api_service" {
   name                = "${local.name_prefix}-api"
   cluster_arn         = aws_ecs_cluster.this.arn
   image               = local.ecr_image_uri
-  command             = ["node", "dist/main.js"]
-  container_port      = 8080
+  command             = ["node", "dist/index.js"]
+  container_port      = 3000
   cpu                 = var.api_cpu
   memory              = var.api_memory
   min_count           = var.api_min_count
@@ -2266,7 +2266,7 @@ Expected: 1 VPC with CIDR `10.10.0.0/16`, 6 subnets (2 public, 2 app, 2 data) wi
 
 ```bash
 terraform output -raw web_url 2>/dev/null || echo "https://beta.curry.space"
-curl -sI "https://beta.curry.space/api/health"
+curl -sI "https://beta.curry.space/api/healthz"
 ```
 
 Expected: `HTTP/2 200` — this reaches CloudFront, which forwards to the ALB with the `X-Origin-Verify` header attached, which the priority-20 listener rule matches and returns a fixed 200 for, all without needing a single healthy ECS task. This is the key end-to-end proof that Tasks 1, 6, and 8 are wired correctly.
@@ -2274,7 +2274,7 @@ Expected: `HTTP/2 200` — this reaches CloudFront, which forwards to the ALB wi
 Then confirm the header enforcement directly against the ALB (bypassing CloudFront, which real clients can't do since the security group blocks non-CloudFront IPs — this specific check has to run from somewhere the security group allows, e.g. a Session Manager session in an app subnet, or temporarily allow your IP for this one test and revert):
 
 ```bash
-curl -sI "https://<alb-dns-name>/health"
+curl -sI "https://<alb-dns-name>/healthz"
 ```
 
 Expected: `HTTP/2 403` — no `X-Origin-Verify` header means the default action rejects it, proving the header check isn't decorative.
