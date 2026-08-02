@@ -193,4 +193,12 @@ resource "aws_securityhub_account" "this" {}
 resource "aws_securityhub_standards_subscription" "foundational" {
   standards_arn = "arn:aws:securityhub:us-east-1::standards/aws-foundational-security-best-practices/v/1.0.0"
   depends_on    = [aws_securityhub_account.this]
+
+  # Default create timeout is 3m, which two live applies confirmed is too
+  # short on a freshly-enabled Security Hub account (it sat in PENDING both
+  # times). AWS provider docs make this timeout configurable for exactly
+  # this reason.
+  timeouts {
+    create = "15m"
+  }
 }
