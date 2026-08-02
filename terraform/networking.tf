@@ -366,3 +366,18 @@ resource "aws_security_group_rule" "worker_egress_https" {
   security_group_id = aws_security_group.worker.id
   cidr_blocks       = ["0.0.0.0/0"]
 }
+
+# Missing from the original plan -- scheduler had no general HTTPS egress
+# at all (only the port-scoped rules to sg-rds-proxy/sg-redis), so it could
+# never reach the Secrets Manager interface endpoint at task startup.
+# Confirmed live: every scheduler task failed with "ResourceInitializationError:
+# ... context deadline exceeded" fetching cs/beta/database-url, while
+# api/worker (which have this rule) succeeded on the same deploy.
+resource "aws_security_group_rule" "scheduler_egress_https" {
+  type              = "egress"
+  from_port         = 443
+  to_port           = 443
+  protocol          = "tcp"
+  security_group_id = aws_security_group.scheduler.id
+  cidr_blocks       = ["0.0.0.0/0"]
+}
