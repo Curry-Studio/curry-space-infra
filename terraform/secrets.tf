@@ -63,6 +63,11 @@ resource "aws_secretsmanager_secret_version" "alb_origin_verify" {
 # real signing key is generated and tracked. Currently unused: curryspacebe's
 # env schema (src/config/env.ts) has no JWT_SIGNING_KEY field, so this isn't
 # wired into any task's injected secrets yet.
+#
+# Superseded by jwt_access_secret/jwt_refresh_secret below (spec 0006 landed
+# two separate JWT secrets, not one) — this one stays as-is, still unused,
+# rather than repurposing an already-applied resource sight-unseen. Fine to
+# remove in a follow-up cleanup.
 resource "aws_secretsmanager_secret" "jwt" {
   name = "cs/${var.environment}/jwt"
 }
@@ -110,4 +115,60 @@ resource "aws_secretsmanager_secret_version" "redis_url" {
   # transit_encryption_enabled = true, so the replication group only accepts
   # TLS connections; ioredis switches into TLS mode based on this scheme.
   secret_string = "rediss://:${random_password.redis_auth.result}@${aws_elasticache_replication_group.this.primary_endpoint_address}:6379"
+}
+
+# --- Auth & identity (spec 0006) ---
+
+resource "random_password" "jwt_access_secret" {
+  length  = 48
+  special = false
+}
+
+resource "aws_secretsmanager_secret" "jwt_access_secret" {
+  name = "cs/${var.environment}/jwt-access-secret"
+}
+
+resource "aws_secretsmanager_secret_version" "jwt_access_secret" {
+  secret_id     = aws_secretsmanager_secret.jwt_access_secret.id
+  secret_string = random_password.jwt_access_secret.result
+}
+
+resource "random_password" "jwt_refresh_secret" {
+  length  = 48
+  special = false
+}
+
+resource "aws_secretsmanager_secret" "jwt_refresh_secret" {
+  name = "cs/${var.environment}/jwt-refresh-secret"
+}
+
+resource "aws_secretsmanager_secret_version" "jwt_refresh_secret" {
+  secret_id     = aws_secretsmanager_secret.jwt_refresh_secret.id
+  secret_string = random_password.jwt_refresh_secret.result
+}
+
+resource "random_password" "guest_token_secret" {
+  length  = 48
+  special = false
+}
+
+resource "aws_secretsmanager_secret" "guest_token_secret" {
+  name = "cs/${var.environment}/guest-token-secret"
+}
+
+resource "aws_secretsmanager_secret_version" "guest_token_secret" {
+  secret_id     = aws_secretsmanager_secret.guest_token_secret.id
+  secret_string = random_password.guest_token_secret.result
+}
+
+# Empty on purpose, same reasoning as the jwt placeholder above — this is an
+# asymmetric keypair (RS256), not a random string, so Terraform can't
+# generate the value here and have it mean anything on the other side: the
+# private half lives here, but the *public* half has to reach currystudiobe
+# (a separate repo, deployed to a plain EC2 .env, not Secrets Manager) for
+# the two to verify against each other. Fill this in via
+# `aws secretsmanager put-secret-value` right after apply — see the PR
+# description for the exact command and the matching public key.
+resource "aws_secretsmanager_secret" "space_handoff_private_key" {
+  name = "cs/${var.environment}/space-handoff-private-key"
 }

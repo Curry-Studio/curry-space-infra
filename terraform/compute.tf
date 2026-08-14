@@ -60,6 +60,10 @@ resource "aws_iam_role_policy" "execution_secrets" {
         aws_secretsmanager_secret.database_url.arn,
         aws_secretsmanager_secret.redis_url.arn,
         aws_secretsmanager_secret.cookie_secret.arn,
+        aws_secretsmanager_secret.jwt_access_secret.arn,
+        aws_secretsmanager_secret.jwt_refresh_secret.arn,
+        aws_secretsmanager_secret.guest_token_secret.arn,
+        aws_secretsmanager_secret.space_handoff_private_key.arn,
       ]
     }]
   })
@@ -155,6 +159,15 @@ locals {
     { name = "DATABASE_URL", valueFrom = aws_secretsmanager_secret.database_url.arn },
     { name = "REDIS_URL", valueFrom = aws_secretsmanager_secret.redis_url.arn },
     { name = "COOKIE_SECRET", valueFrom = aws_secretsmanager_secret.cookie_secret.arn },
+    # Auth & identity (spec 0006). All three services need these too, not
+    # just the api container -- env.ts validates the full schema on boot
+    # regardless of which entrypoint (index.js/worker.js/scheduler.js) is
+    # running, so a missing one crashes worker/scheduler exactly the same
+    # way it would crash api.
+    { name = "JWT_ACCESS_SECRET", valueFrom = aws_secretsmanager_secret.jwt_access_secret.arn },
+    { name = "JWT_REFRESH_SECRET", valueFrom = aws_secretsmanager_secret.jwt_refresh_secret.arn },
+    { name = "GUEST_TOKEN_SECRET", valueFrom = aws_secretsmanager_secret.guest_token_secret.arn },
+    { name = "SPACE_HANDOFF_PRIVATE_KEY", valueFrom = aws_secretsmanager_secret.space_handoff_private_key.arn },
   ]
   shared_env = [
     # Always "production": this is Node's runtime mode, not the AWS
@@ -167,6 +180,11 @@ locals {
     { name = "NODE_ENV", value = "production" },
     { name = "AWS_REGION", value = var.aws_region },
     { name = "DB_SSL", value = "true" },
+    # Not a secret -- just the shared Firebase project id (spec 0006: Space
+    # and currystudiobe verify against the same project). Same value as
+    # currystudiobe's real FIREBASE_PROJECT_ID today; revisit if that
+    # project ever splits by environment.
+    { name = "FIREBASE_PROJECT_ID", value = "curry-studio" },
   ]
 }
 
