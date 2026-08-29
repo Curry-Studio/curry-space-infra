@@ -172,3 +172,23 @@ resource "aws_secretsmanager_secret_version" "guest_token_secret" {
 resource "aws_secretsmanager_secret" "space_handoff_private_key" {
   name = "cs/${var.environment}/space-handoff-private-key"
 }
+
+# Cursor pagination (spec 0004) — env.ts's CURSOR_SIGNING_SECRET was never
+# wired into infra when 0004 shipped, so a container running an image built
+# after that landed crash-loops on boot (missing required env var) even
+# though nothing about this secret changed. Same random_password pattern as
+# cookie_secret; no cross-repo counterpart needed since this only signs/
+# verifies cursors within curryspacebe itself.
+resource "random_password" "cursor_signing_secret" {
+  length  = 48
+  special = false
+}
+
+resource "aws_secretsmanager_secret" "cursor_signing_secret" {
+  name = "cs/${var.environment}/cursor-signing-secret"
+}
+
+resource "aws_secretsmanager_secret_version" "cursor_signing_secret" {
+  secret_id     = aws_secretsmanager_secret.cursor_signing_secret.id
+  secret_string = random_password.cursor_signing_secret.result
+}
