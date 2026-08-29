@@ -64,6 +64,7 @@ resource "aws_iam_role_policy" "execution_secrets" {
         aws_secretsmanager_secret.jwt_refresh_secret.arn,
         aws_secretsmanager_secret.guest_token_secret.arn,
         aws_secretsmanager_secret.space_handoff_private_key.arn,
+        aws_secretsmanager_secret.cursor_signing_secret.arn,
       ]
     }]
   })
@@ -168,6 +169,12 @@ locals {
     { name = "JWT_REFRESH_SECRET", valueFrom = aws_secretsmanager_secret.jwt_refresh_secret.arn },
     { name = "GUEST_TOKEN_SECRET", valueFrom = aws_secretsmanager_secret.guest_token_secret.arn },
     { name = "SPACE_HANDOFF_PRIVATE_KEY", valueFrom = aws_secretsmanager_secret.space_handoff_private_key.arn },
+    # API contract & conventions (spec 0004) — HMAC key for opaque list
+    # cursors. Missing from this list until now, which is why api's newer
+    # image (built after 0004 shipped) crash-loops on
+    # `CURSOR_SIGNING_SECRET: Required` while worker/scheduler (still on an
+    # older image) don't.
+    { name = "CURSOR_SIGNING_SECRET", valueFrom = aws_secretsmanager_secret.cursor_signing_secret.arn },
   ]
   shared_env = [
     # Always "production": this is Node's runtime mode, not the AWS
