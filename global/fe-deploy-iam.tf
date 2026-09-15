@@ -52,6 +52,19 @@ locals {
       ]
     ]
   ])
+
+  # Front-end-only preview environments — web bucket only, no admin app.
+  # These buckets/CloudFront distributions are created directly via AWS
+  # CLI, not Terraform (see PR history for proto.curry.space) — this
+  # local exists so cs-fe-deploy's S3 permissions stay Terraform-managed
+  # and don't get wiped by a future `global` apply. Add a name here each
+  # time a new preview environment's bucket is created.
+  fe_preview_bucket_arns = flatten([
+    for env in ["proto"] : [
+      "arn:aws:s3:::cs-${env}-use1-web-${data.aws_caller_identity.current.account_id}",
+      "arn:aws:s3:::cs-${env}-use1-web-${data.aws_caller_identity.current.account_id}/*",
+    ]
+  ])
 }
 
 data "aws_iam_policy_document" "fe_deploy_permissions" {
@@ -64,7 +77,7 @@ data "aws_iam_policy_document" "fe_deploy_permissions" {
       "s3:DeleteObject",
       "s3:ListBucket",
     ]
-    resources = local.fe_bucket_arns
+    resources = concat(local.fe_bucket_arns, local.fe_preview_bucket_arns)
   }
 
   statement {
