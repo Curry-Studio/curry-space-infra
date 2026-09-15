@@ -52,7 +52,7 @@ locals {
 
   be_task_role_arns = flatten([
     for env in local.be_environments : [
-      for role in ["execution-role", "api-task-role", "worker-task-role", "scheduler-task-role"] :
+      for role in ["execution-role", "api-task-role", "worker-task-role", "scheduler-task-role", "migrate-task-role"] :
       "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/cs-${env}-use1-${role}"
     ]
   ])
@@ -112,6 +112,53 @@ data "aws_iam_policy_document" "be_deploy_permissions" {
       variable = "iam:PassedToService"
       values   = ["ecs-tasks.amazonaws.com"]
     }
+  }
+
+  statement {
+    # RunTask supports resource-level permissions on the task definition
+    # (family:revision, or family:* for "any revision of this family") plus
+    # an ecs:cluster condition — scoped to exactly the migrate family in
+    # each environment's cluster, nothing else this role could run.
+    sid     = "EcsRunMigrateTask"
+    effect  = "Allow"
+    actions = ["ecs:RunTask"]
+    resources = [
+      for env in local.be_environments :
+      "arn:aws:ecs:us-east-1:${data.aws_caller_identity.current.account_id}:task-definition/cs-${env}-use1-migrate:*"
+    ]
+
+    condition {
+      test     = "ArnEquals"
+      variable = "ecs:cluster"
+      values = [
+        for env in local.be_environments :
+        "arn:aws:ecs:us-east-1:${data.aws_caller_identity.current.account_id}:cluster/cs-${env}-use1-cluster"
+      ]
+    }
+  }
+
+  statement {
+    # deploy.yml polls the migrate task via `aws ecs wait tasks-stopped` +
+    # `describe-tasks` to read its exit code — task ARNs aren't known until
+    # RunTask returns one, so this is scoped to "any task in this cluster",
+    # not a specific ARN.
+    sid     = "EcsDescribeMigrateTasks"
+    effect  = "Allow"
+    actions = ["ecs:DescribeTasks"]
+    resources = [
+      for env in local.be_environments :
+      "arn:aws:ecs:us-east-1:${data.aws_caller_identity.current.account_id}:task/cs-${env}-use1-cluster/*"
+    ]
+  }
+
+  statement {
+    # deploy.yml looks up the migrate task's subnets/security group by the
+    # cs-<env>-use1-* naming convention at runtime, same env-agnostic
+    # approach as everything else in this role, rather than hardcoding IDs.
+    sid       = "Ec2DescribeNetworking"
+    effect    = "Allow"
+    actions   = ["ec2:DescribeSubnets", "ec2:DescribeSecurityGroups"]
+    resources = ["*"] # neither action supports resource-level scoping
   }
 
   statement {
