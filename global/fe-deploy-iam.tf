@@ -52,6 +52,17 @@ locals {
       ]
     ]
   ])
+
+  # Front-end-only preview environments (terraform-web-preview/) — web
+  # bucket only, no admin app. Add a name here each time a new preview
+  # environment is created; see
+  # docs/superpowers/specs/2026-09-15-proto-web-preview-design.md.
+  fe_preview_bucket_arns = flatten([
+    for env in ["proto"] : [
+      "arn:aws:s3:::cs-${env}-use1-web-${data.aws_caller_identity.current.account_id}",
+      "arn:aws:s3:::cs-${env}-use1-web-${data.aws_caller_identity.current.account_id}/*",
+    ]
+  ])
 }
 
 data "aws_iam_policy_document" "fe_deploy_permissions" {
@@ -64,7 +75,7 @@ data "aws_iam_policy_document" "fe_deploy_permissions" {
       "s3:DeleteObject",
       "s3:ListBucket",
     ]
-    resources = local.fe_bucket_arns
+    resources = concat(local.fe_bucket_arns, local.fe_preview_bucket_arns)
   }
 
   statement {
