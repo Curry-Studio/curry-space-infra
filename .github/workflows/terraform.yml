@@ -11,7 +11,7 @@ on:
         description: "Which config to run against"
         required: true
         type: choice
-        options: [bootstrap, global, beta, staging, production]
+        options: [bootstrap, global, beta, staging, production, proto-web]
       action:
         description: "plan (safe) or apply"
         required: true
@@ -138,7 +138,7 @@ jobs:
         run: terraform apply tfplan
 
       - name: Init (environment)
-        if: inputs.target != 'global' && inputs.target != 'bootstrap'
+        if: inputs.target != 'global' && inputs.target != 'bootstrap' && inputs.target != 'proto-web'
         working-directory: terraform
         run: |
           terraform init \
@@ -148,11 +148,36 @@ jobs:
             -backend-config="dynamodb_table=cs-tfstate-lock"
 
       - name: Plan (environment)
-        if: inputs.target != 'global' && inputs.target != 'bootstrap'
+        if: inputs.target != 'global' && inputs.target != 'bootstrap' && inputs.target != 'proto-web'
         working-directory: terraform
         run: terraform plan -var-file=environments/${{ inputs.target }}.tfvars -out=tfplan
 
       - name: Apply (environment)
-        if: inputs.target != 'global' && inputs.target != 'bootstrap' && inputs.action == 'apply'
+        if: inputs.target != 'global' && inputs.target != 'bootstrap' && inputs.target != 'proto-web' && inputs.action == 'apply'
         working-directory: terraform
         run: terraform apply tfplan
+
+      - name: Init (proto-web)
+        if: inputs.target == 'proto-web'
+        working-directory: terraform-web-preview
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.STATE_BUCKET }}" \
+            -backend-config="key=envs/preview-proto/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="dynamodb_table=cs-tfstate-lock"
+
+      - name: Plan (proto-web)
+        if: inputs.target == 'proto-web'
+        working-directory: terraform-web-preview
+        run: terraform plan -var-file=environments/proto.tfvars -out=tfplan
+
+      - name: Apply (proto-web)
+        if: inputs.target == 'proto-web' && inputs.action == 'apply'
+        working-directory: terraform-web-preview
+        run: terraform apply tfplan
+
+      - name: Show outputs (proto-web)
+        if: inputs.target == 'proto-web' && inputs.action == 'apply'
+        working-directory: terraform-web-preview
+        run: terraform output

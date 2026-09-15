@@ -19,6 +19,12 @@ terraform/modules/cloudfront_spa/   Reusable module: one S3-backed SPA behind Cl
                                      optional ALB origin and /api/* behavior (used by `web`, not `admin`).
 terraform/modules/ecs_service/      Reusable module: one ECS Fargate service + task role + autoscaling.
 terraform/environments/*.tfvars     Per-environment variable values.
+terraform-web-preview/  Front-end-only preview environments (no VPC/ECS/Aurora/Redis/ALB):
+                         S3 + CloudFront + WAF + DNS only, via the same cloudfront_spa
+                         module terraform/ uses. One tfvars file per preview environment
+                         (currently just proto.tfvars). Applied via the terraform.yml
+                         workflow's `proto-web` target (own state file, separate from
+                         terraform/'s beta/staging/production state).
 ```
 
 ## Why three separate applies
@@ -50,6 +56,12 @@ terraform apply -var-file=environments/beta.tfvars
 ```
 
 Always check `terraform plan` output confirms the environment you expect before approving an apply — §D-001 in decisions.md: all three environments share one AWS account, so there's no account-boundary safety net.
+
+## Verifying proto
+
+```bash
+curl -I https://proto.curry.space   # expect a CloudFront/S3 response, not a cert error
+```
 
 ## Verifying beta
 
