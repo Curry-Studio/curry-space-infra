@@ -381,3 +381,106 @@ resource "aws_security_group_rule" "scheduler_egress_https" {
   security_group_id = aws_security_group.scheduler.id
   cidr_blocks       = ["0.0.0.0/0"]
 }
+
+# --- Search (spec 0016) — self-hosted Meilisearch (meilisearch.tf). Same
+# SG-to-SG graph convention as the rest of this file: sg-api/sg-worker/
+# sg-scheduler -> sg-meilisearch -> sg-meili-efs, plus egress-to-internet for
+# the Docker Hub image pull (getmeili/meilisearch isn't in ECR).
+
+resource "aws_security_group" "meilisearch" {
+  name_prefix = "${local.name_prefix}-meilisearch-"
+  vpc_id      = aws_vpc.this.id
+  tags        = { Name = "${local.name_prefix}-sg-meilisearch" }
+}
+
+resource "aws_security_group_rule" "api_to_meilisearch" {
+  type                     = "ingress"
+  from_port                = 7700
+  to_port                  = 7700
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.meilisearch.id
+  source_security_group_id = aws_security_group.api.id
+}
+
+resource "aws_security_group_rule" "worker_to_meilisearch" {
+  type                     = "ingress"
+  from_port                = 7700
+  to_port                  = 7700
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.meilisearch.id
+  source_security_group_id = aws_security_group.worker.id
+}
+
+resource "aws_security_group_rule" "scheduler_to_meilisearch" {
+  type                     = "ingress"
+  from_port                = 7700
+  to_port                  = 7700
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.meilisearch.id
+  source_security_group_id = aws_security_group.scheduler.id
+}
+
+resource "aws_security_group_rule" "api_egress_to_meilisearch" {
+  type                     = "egress"
+  from_port                = 7700
+  to_port                  = 7700
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.api.id
+  source_security_group_id = aws_security_group.meilisearch.id
+}
+
+resource "aws_security_group_rule" "worker_egress_to_meilisearch" {
+  type                     = "egress"
+  from_port                = 7700
+  to_port                  = 7700
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.worker.id
+  source_security_group_id = aws_security_group.meilisearch.id
+}
+
+resource "aws_security_group_rule" "scheduler_egress_to_meilisearch" {
+  type                     = "egress"
+  from_port                = 7700
+  to_port                  = 7700
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.scheduler.id
+  source_security_group_id = aws_security_group.meilisearch.id
+}
+
+# Meilisearch's own egress: the ECR/logs/secretsmanager interface endpoints
+# (443, via the vpce SG above) plus the Docker Hub pull, which — unlike the
+# app image — leaves the VPC entirely, so this needs open internet egress via
+# NAT (app subnets), same as api_egress_https/worker_egress_https above.
+resource "aws_security_group_rule" "meilisearch_egress_https" {
+  type              = "egress"
+  from_port         = 443
+  to_port           = 443
+  protocol          = "tcp"
+  security_group_id = aws_security_group.meilisearch.id
+  cidr_blocks       = ["0.0.0.0/0"]
+  description       = "Docker Hub image pull + AWS interface endpoints"
+}
+
+resource "aws_security_group" "meili_efs" {
+  name_prefix = "${local.name_prefix}-meili-efs-"
+  vpc_id      = aws_vpc.this.id
+  tags        = { Name = "${local.name_prefix}-sg-meili-efs" }
+}
+
+resource "aws_security_group_rule" "meilisearch_to_efs" {
+  type                     = "ingress"
+  from_port                = 2049
+  to_port                  = 2049
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.meili_efs.id
+  source_security_group_id = aws_security_group.meilisearch.id
+}
+
+resource "aws_security_group_rule" "meilisearch_egress_to_efs" {
+  type                     = "egress"
+  from_port                = 2049
+  to_port                  = 2049
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.meilisearch.id
+  source_security_group_id = aws_security_group.meili_efs.id
+}
