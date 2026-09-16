@@ -183,10 +183,12 @@ data "aws_iam_policy_document" "be_deploy_permissions" {
     sid     = "LogsGetMigrateEvents"
     effect  = "Allow"
     actions = ["logs:GetLogEvents"]
-    resources = [
-      for env in local.be_environments :
-      "arn:aws:logs:us-east-1:${data.aws_caller_identity.current.account_id}:log-group:/ecs/cs-${env}-use1-migrate:*"
-    ]
+    resources = flatten([
+      for env in local.be_environments : [
+        "arn:aws:logs:us-east-1:${data.aws_caller_identity.current.account_id}:log-group:/ecs/cs-${env}-use1-migrate:*",
+        "arn:aws:logs:us-east-1:${data.aws_caller_identity.current.account_id}:log-group:/ecs/cs-${env}-use1-migrate:log-stream:*"
+      ]
+    ])
   }
 }
 
