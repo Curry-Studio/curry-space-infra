@@ -484,3 +484,44 @@ resource "aws_security_group_rule" "meilisearch_egress_to_efs" {
   security_group_id        = aws_security_group.meilisearch.id
   source_security_group_id = aws_security_group.meili_efs.id
 }
+
+# --- Backend CD (spec 0021) — the one-off migrate task (migrate.tf). Same
+# SG-to-SG convention as the rest of this file: sg-migrate <-> sg-aurora
+# directly. (The RDS Proxy this file's aurora rules were originally written
+# against does not exist in this account today — api/worker/scheduler
+# already reach Aurora directly in practice; migrate follows the same path
+# rather than adding a second, inconsistent one.)
+
+resource "aws_security_group" "migrate" {
+  name_prefix = "${local.name_prefix}-migrate-"
+  vpc_id      = aws_vpc.this.id
+  tags        = { Name = "${local.name_prefix}-sg-migrate" }
+}
+
+resource "aws_security_group_rule" "migrate_egress_to_aurora" {
+  type                     = "egress"
+  from_port                = 5432
+  to_port                  = 5432
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.migrate.id
+  source_security_group_id = aws_security_group.aurora.id
+}
+
+resource "aws_security_group_rule" "aurora_ingress_from_migrate" {
+  type                     = "ingress"
+  from_port                = 5432
+  to_port                  = 5432
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.aurora.id
+  source_security_group_id = aws_security_group.migrate.id
+}
+
+resource "aws_security_group_rule" "migrate_egress_https" {
+  type              = "egress"
+  from_port         = 443
+  to_port           = 443
+  protocol          = "tcp"
+  security_group_id = aws_security_group.migrate.id
+  cidr_blocks       = ["0.0.0.0/0"]
+  description       = "ECR image pull + AWS interface endpoints"
+}
