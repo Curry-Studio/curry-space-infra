@@ -88,21 +88,25 @@ resource "aws_secretsmanager_secret_version" "cookie_secret" {
 
 # curryspacebe's env schema (src/config/env.ts) reads DATABASE_URL/REDIS_URL
 # as single connection strings, not a host + a separate credentials secret —
-# so the values assembled here, not db_app/redis_auth directly, are what's
-# injected into the containers (compute.tf). db_app/redis_auth remain as-is
-# since aws_db_proxy.this's SECRETS auth scheme (database.tf) requires that
-# exact username/password JSON shape.
+# so the value assembled here, not db_app directly, is what's injected into
+# the containers (compute.tf). db_app itself stays as the username/password
+# JSON shape a few plausible future consumers (an RDS Proxy SECRETS auth
+# scheme, a migration tool) would want.
 #
-# Target database is "postgres" -- the guaranteed default Aurora PostgreSQL
-# database, since no application database/role has been created yet (that's
-# a migration/bootstrap step, still deferred per this task's brief).
+# Points at the Aurora cluster endpoint directly, not an RDS Proxy — see the
+# comment on database.tf's now-removed proxy resources (2026-09-16): a proxy
+# was planned but never actually applied, and this direct path is what's
+# live and verified working. Target database is "postgres" -- the
+# guaranteed default Aurora PostgreSQL database; the cs_app role itself was
+# created directly against it (2026-09-15, the same deferred bootstrap step
+# this comment used to flag as still-outstanding — it's done now).
 resource "aws_secretsmanager_secret" "database_url" {
   name = "cs/${var.environment}/database-url"
 }
 
 resource "aws_secretsmanager_secret_version" "database_url" {
   secret_id     = aws_secretsmanager_secret.database_url.id
-  secret_string = "postgresql://cs_app:${random_password.db_app.result}@${aws_db_proxy.this.endpoint}:5432/postgres"
+  secret_string = "postgresql://cs_app:${random_password.db_app.result}@${aws_rds_cluster.this.endpoint}:5432/postgres"
 }
 
 resource "aws_secretsmanager_secret" "redis_url" {
