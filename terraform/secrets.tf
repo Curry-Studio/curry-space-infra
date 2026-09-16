@@ -192,3 +192,24 @@ resource "aws_secretsmanager_secret_version" "cursor_signing_secret" {
   secret_id     = aws_secretsmanager_secret.cursor_signing_secret.id
   secret_string = random_password.cursor_signing_secret.result
 }
+
+# Search (spec 0016) — Meilisearch master key. Used two ways: injected into
+# the self-hosted Meilisearch task itself (meilisearch.tf) to set/enforce it
+# as that server's own master key, and into api/worker/scheduler (compute.tf)
+# where env.ts's MEILI_MASTER_KEY is optional-on-purpose (0016 final review) —
+# each process derives its one scoped key from this at boot and never uses it
+# at request/job time. Same random_password pattern as the other signing
+# secrets; no cross-repo counterpart needed.
+resource "random_password" "meili_master_key" {
+  length  = 32
+  special = false
+}
+
+resource "aws_secretsmanager_secret" "meili_master_key" {
+  name = "cs/${var.environment}/meili-master-key"
+}
+
+resource "aws_secretsmanager_secret_version" "meili_master_key" {
+  secret_id     = aws_secretsmanager_secret.meili_master_key.id
+  secret_string = random_password.meili_master_key.result
+}

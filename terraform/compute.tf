@@ -65,6 +65,7 @@ resource "aws_iam_role_policy" "execution_secrets" {
         aws_secretsmanager_secret.guest_token_secret.arn,
         aws_secretsmanager_secret.space_handoff_private_key.arn,
         aws_secretsmanager_secret.cursor_signing_secret.arn,
+        aws_secretsmanager_secret.meili_master_key.arn,
       ]
     }]
   })
@@ -175,6 +176,12 @@ locals {
     # `CURSOR_SIGNING_SECRET: Required` while worker/scheduler (still on an
     # older image) don't.
     { name = "CURSOR_SIGNING_SECRET", valueFrom = aws_secretsmanager_secret.cursor_signing_secret.arn },
+    # Search (spec 0016). Optional in env.ts by design — absent, search
+    # degrades to UnavailableSearchProvider rather than crash-looping — but
+    # now that meilisearch.tf runs a real instance in this environment, wire
+    # the real key through so api/worker/scheduler each mint their scoped key
+    # at boot instead of degrading.
+    { name = "MEILI_MASTER_KEY", valueFrom = aws_secretsmanager_secret.meili_master_key.arn },
   ]
   shared_env = [
     # Always "production": this is Node's runtime mode, not the AWS
@@ -192,6 +199,10 @@ locals {
     # currystudiobe's real FIREBASE_PROJECT_ID today; revisit if that
     # project ever splits by environment.
     { name = "FIREBASE_PROJECT_ID", value = "curry-studio" },
+    # Search (spec 0016) — internal Cloud Map DNS name of the self-hosted
+    # Meilisearch service (meilisearch.tf), not a public endpoint. Overrides
+    # env.ts's localhost default, which only makes sense for local dev.
+    { name = "MEILI_HOST", value = local.meili_host },
   ]
 }
 

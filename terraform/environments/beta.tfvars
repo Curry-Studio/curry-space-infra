@@ -34,3 +34,8 @@ worker_max_count = 1
 
 scheduler_cpu    = 512
 scheduler_memory = 1024
+
+# Spec 0016 — self-hosted Meilisearch, single instance, same 0.5 vCPU / 1GB
+# beta sizing as the other three services.
+meili_cpu    = 512
+meili_memory = 1024

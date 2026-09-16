@@ -90,3 +90,16 @@ variable "worker_max_count" { type = number }
 
 variable "scheduler_cpu" { type = number }
 variable "scheduler_memory" { type = number }
+
+# Search (spec 0016) — self-hosted Meilisearch (meilisearch.tf). Defaulted
+# (unlike the other services' cpu/memory) so staging/production.tfvars don't
+# need updating as part of this beta-scoped change; set explicitly in
+# beta.tfvars to match the 0.5 vCPU / 1GB pattern used everywhere else there.
+variable "meili_cpu" {
+  type    = number
+  default = 512
+}
+variable "meili_memory" {
+  type    = number
+  default = 1024
+}
