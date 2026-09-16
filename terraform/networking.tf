@@ -140,8 +140,9 @@ resource "aws_vpc_endpoint" "interface" {
 
 # --- Security groups. Every rule references another security group, never
 # a CIDR block, so rules stay correct as addresses change underneath them
-# (architecture doc §3.8). Graph: sg-alb -> sg-api -> sg-rds-proxy ->
-# sg-aurora, with sg-worker/sg-scheduler reaching sg-rds-proxy and sg-redis
+# (architecture doc §3.8). Graph: sg-alb -> sg-api -> sg-aurora directly (no
+# RDS Proxy in front today — see the comment above the direct-to-aurora
+# rules below), with sg-worker/sg-scheduler reaching sg-aurora and sg-redis
 # directly and accepting no inbound traffic at all.
 
 data "aws_ec2_managed_prefix_list" "cloudfront" {
@@ -204,87 +205,70 @@ resource "aws_security_group" "scheduler" {
   tags        = { Name = "${local.name_prefix}-sg-scheduler" }
 }
 
-resource "aws_security_group" "rds_proxy" {
-  name_prefix = "${local.name_prefix}-rds-proxy-"
-  vpc_id      = aws_vpc.this.id
-  tags        = { Name = "${local.name_prefix}-sg-rds-proxy" }
-}
-
-resource "aws_security_group_rule" "api_to_proxy" {
-  type                     = "ingress"
-  from_port                = 5432
-  to_port                  = 5432
-  protocol                 = "tcp"
-  security_group_id        = aws_security_group.rds_proxy.id
-  source_security_group_id = aws_security_group.api.id
-}
-
-resource "aws_security_group_rule" "worker_to_proxy" {
-  type                     = "ingress"
-  from_port                = 5432
-  to_port                  = 5432
-  protocol                 = "tcp"
-  security_group_id        = aws_security_group.rds_proxy.id
-  source_security_group_id = aws_security_group.worker.id
-}
-
-resource "aws_security_group_rule" "scheduler_to_proxy" {
-  type                     = "ingress"
-  from_port                = 5432
-  to_port                  = 5432
-  protocol                 = "tcp"
-  security_group_id        = aws_security_group.rds_proxy.id
-  source_security_group_id = aws_security_group.scheduler.id
-}
-
-resource "aws_security_group_rule" "api_egress_to_proxy" {
-  type                     = "egress"
-  from_port                = 5432
-  to_port                  = 5432
-  protocol                 = "tcp"
-  security_group_id        = aws_security_group.api.id
-  source_security_group_id = aws_security_group.rds_proxy.id
-}
-
-resource "aws_security_group_rule" "worker_egress_to_proxy" {
-  type                     = "egress"
-  from_port                = 5432
-  to_port                  = 5432
-  protocol                 = "tcp"
-  security_group_id        = aws_security_group.worker.id
-  source_security_group_id = aws_security_group.rds_proxy.id
-}
-
-resource "aws_security_group_rule" "scheduler_egress_to_proxy" {
-  type                     = "egress"
-  from_port                = 5432
-  to_port                  = 5432
-  protocol                 = "tcp"
-  security_group_id        = aws_security_group.scheduler.id
-  source_security_group_id = aws_security_group.rds_proxy.id
-}
-
 resource "aws_security_group" "aurora" {
   name_prefix = "${local.name_prefix}-aurora-"
   vpc_id      = aws_vpc.this.id
   tags        = { Name = "${local.name_prefix}-sg-aurora" }
 }
 
-resource "aws_security_group_rule" "proxy_to_aurora" {
+# Direct to Aurora, not via an RDS Proxy — the proxy this graph originally
+# routed through (database.tf) was written but never actually applied
+# (confirmed 2026-09-16: zero aws_db_proxy resources exist; these rules
+# already existed in the beta state file, tracked from whenever this was
+# last the real, applied design). api/worker/scheduler/migrate reaching
+# Aurora directly is what's live and verified working today.
+
+resource "aws_security_group_rule" "api_to_aurora" {
   type                     = "ingress"
   from_port                = 5432
   to_port                  = 5432
   protocol                 = "tcp"
   security_group_id        = aws_security_group.aurora.id
-  source_security_group_id = aws_security_group.rds_proxy.id
+  source_security_group_id = aws_security_group.api.id
 }
 
-resource "aws_security_group_rule" "proxy_egress_to_aurora" {
+resource "aws_security_group_rule" "api_egress_to_aurora" {
   type                     = "egress"
   from_port                = 5432
   to_port                  = 5432
   protocol                 = "tcp"
-  security_group_id        = aws_security_group.rds_proxy.id
+  security_group_id        = aws_security_group.api.id
+  source_security_group_id = aws_security_group.aurora.id
+}
+
+resource "aws_security_group_rule" "worker_to_aurora" {
+  type                     = "ingress"
+  from_port                = 5432
+  to_port                  = 5432
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.aurora.id
+  source_security_group_id = aws_security_group.worker.id
+}
+
+resource "aws_security_group_rule" "worker_egress_to_aurora" {
+  type                     = "egress"
+  from_port                = 5432
+  to_port                  = 5432
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.worker.id
+  source_security_group_id = aws_security_group.aurora.id
+}
+
+resource "aws_security_group_rule" "scheduler_to_aurora" {
+  type                     = "ingress"
+  from_port                = 5432
+  to_port                  = 5432
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.aurora.id
+  source_security_group_id = aws_security_group.scheduler.id
+}
+
+resource "aws_security_group_rule" "scheduler_egress_to_aurora" {
+  type                     = "egress"
+  from_port                = 5432
+  to_port                  = 5432
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.scheduler.id
   source_security_group_id = aws_security_group.aurora.id
 }
 
@@ -368,7 +352,7 @@ resource "aws_security_group_rule" "worker_egress_https" {
 }
 
 # Missing from the original plan -- scheduler had no general HTTPS egress
-# at all (only the port-scoped rules to sg-rds-proxy/sg-redis), so it could
+# at all (only the port-scoped rules to sg-aurora/sg-redis), so it could
 # never reach the Secrets Manager interface endpoint at task startup.
 # Confirmed live: every scheduler task failed with "ResourceInitializationError:
 # ... context deadline exceeded" fetching cs/beta/database-url, while

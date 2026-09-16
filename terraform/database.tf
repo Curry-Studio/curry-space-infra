@@ -81,73 +81,15 @@ resource "aws_iam_role_policy_attachment" "rds_enhanced_monitoring" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
 }
 
-# --- RDS Proxy: multiplexes hundreds of task connections down to a small
-# pool of real database connections, and holds client connections open
-# across a failover (architecture doc §12.7).
-
-resource "aws_iam_role" "rds_proxy" {
-  name = "${local.name_prefix}-rds-proxy"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Principal = { Service = "rds.amazonaws.com" }
-      Action    = "sts:AssumeRole"
-    }]
-  })
-}
-
-resource "aws_iam_role_policy" "rds_proxy_secrets" {
-  name = "${local.name_prefix}-rds-proxy-secrets"
-  role = aws_iam_role.rds_proxy.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = ["secretsmanager:GetSecretValue"]
-      Resource = [aws_secretsmanager_secret.db_app.arn]
-    }]
-  })
-}
-
-resource "aws_db_proxy" "this" {
-  name                   = "${local.name_prefix}-rds-proxy"
-  engine_family          = "POSTGRESQL"
-  role_arn               = aws_iam_role.rds_proxy.arn
-  vpc_subnet_ids         = aws_subnet.data[*].id
-  vpc_security_group_ids = [aws_security_group.rds_proxy.id]
-  require_tls            = true
-
-  auth {
-    auth_scheme = "SECRETS"
-    secret_arn  = aws_secretsmanager_secret.db_app.arn
-    iam_auth    = "DISABLED"
-  }
-
-  # Without this, Terraform creates the cluster and the proxy in parallel,
-  # and both are first-touch users of the account's shared
-  # AWSServiceRoleForRDS service-linked role. A live apply hit "RDS is not
-  # authorized to assume service-linked role ... Check your RDS
-  # service-linked role and try again" from the proxy racing the cluster
-  # for that role before AWS finished propagating it. Serializing behind
-  # the cluster avoids the race.
-  depends_on = [aws_rds_cluster.this]
-}
-
-resource "aws_db_proxy_default_target_group" "this" {
-  db_proxy_name = aws_db_proxy.this.name
-
-  connection_pool_config {
-    max_connections_percent      = 100
-    max_idle_connections_percent = 50
-    connection_borrow_timeout    = 120
-  }
-}
-
-resource "aws_db_proxy_target" "this" {
-  db_proxy_name         = aws_db_proxy.this.name
-  target_group_name     = aws_db_proxy_default_target_group.this.name
-  db_cluster_identifier = aws_rds_cluster.this.cluster_identifier
-}
+# RDS Proxy was planned here (architecture doc §12.7: multiplexes task
+# connections, holds them open across a failover) but was never actually
+# applied — confirmed 2026-09-16 via both a direct AWS check (zero
+# aws_db_proxy resources exist in this account) and the beta state file
+# itself (no aws_db_proxy* resources tracked). api/worker/scheduler/migrate
+# reach Aurora directly today (networking.tf) and that path is verified
+# working (readyz green, migrations applied, real traffic served) — this
+# reverts the unapplied proxy design rather than leaving dead code that
+# `terraform plan` perpetually wants to create out from under a working
+# database_url. Re-introducing a real RDS Proxy is a legitimate future
+# project; it should be its own deliberate apply, not implied by unrelated
+# work discovering the drift.
