@@ -67,9 +67,20 @@ data "aws_iam_policy_document" "be_deploy_permissions" {
   }
 
   statement {
+    # DescribeImages is what deploy.yml's "Check for an existing image tag"
+    # step uses to detect a re-run against a commit that already pushed
+    # (ECR's tag immutability rejects a second push of the same sha-<sha>
+    # tag otherwise) -- missing here meant that check silently
+    # AccessDenied'd every time (swallowed by its own `>/dev/null 2>&1`),
+    # so `exists` was always false and a re-run always attempted a real
+    # rebuild+push, hard-failing on the immutable-tag error instead of
+    # reusing the existing image as designed. Never surfaced until
+    # 2026-09-16, the first time deploy.yml was re-run for an
+    # already-pushed commit since tag immutability was turned on.
     sid    = "EcrPushPull"
     effect = "Allow"
     actions = [
+      "ecr:DescribeImages",
       "ecr:BatchCheckLayerAvailability",
       "ecr:GetDownloadUrlForLayer",
       "ecr:BatchGetImage",
