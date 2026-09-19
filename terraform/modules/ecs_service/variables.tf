@@ -61,3 +61,9 @@ variable "log_retention_days" {
   type    = number
   default = 14
 }
+
+variable "enable_execute_command" {
+  description = "Enable ECS Exec / SSM port forwarding session support on tasks"
+  type        = bool
+  default     = true
+}
