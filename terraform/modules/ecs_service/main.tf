@@ -42,6 +42,7 @@ resource "aws_ecs_service" "this" {
   desired_count                      = var.min_count
   deployment_minimum_healthy_percent = var.deployment_minimum_healthy_percent
   deployment_maximum_percent         = var.deployment_maximum_percent
+  enable_execute_command             = var.enable_execute_command
 
   dynamic "capacity_provider_strategy" {
     for_each = var.capacity_provider_strategy

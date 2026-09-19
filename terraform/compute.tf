@@ -92,6 +92,11 @@ resource "aws_iam_role_policy" "api_task" {
         Effect   = "Allow"
         Action   = ["secretsmanager:GetSecretValue"]
         Resource = [aws_secretsmanager_secret.db_app.arn, aws_secretsmanager_secret.redis_auth.arn, aws_secretsmanager_secret.jwt.arn]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["ssmmessages:CreateControlChannel", "ssmmessages:CreateDataChannel", "ssmmessages:OpenControlChannel", "ssmmessages:OpenDataChannel"]
+        Resource = "*"
       }
     ]
   })
